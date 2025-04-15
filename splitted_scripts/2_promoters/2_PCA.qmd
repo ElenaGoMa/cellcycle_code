@@ -1,0 +1,85 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+cons_cluster = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+library(CAGEr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(rtracklayer)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+
+
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+```
+
+## PCA
+
+```{r}
+library(magrittr)
+library(ggpubr)
+library(ggplot2)
+library(ggthemes)
+
+Express_matrix<-as.data.frame(CTSSnormalizedTpmDF(cons_cluster))
+Coords_genome<-as.data.frame(CTSScoordinatesGR(cons_cluster))
+
+tpm_exp<-Express_matrix
+Coords_genome$uniqueID<-paste(Coords_genome$seqnames,Coords_genome$pos,Coords_genome$strand,sep = "_")
+rownames(tpm_exp)<-Coords_genome$uniqueID
+gene_list<-Coords_genome$uniqueID
+
+pca.info <- prcomp(tpm_exp, scale = T,
+                   center = TRUE, retx = T)
+screeplot(pca.info, npcs = 10, type = "lines")
+head(pca.info)
+summary(pca.info) #specific explanation ratio of each PC
+head(pca.info$rotation) #Feature vector, regression coefficient
+head(pca.info$sdev) #The square root of the eigenvalues
+head(pca.info$x) #sample score
+
+
+### total vs nuclear
+pca.data = data.frame(sample=rownames(pca.info$rotation),
+                     pca.info$rotation)
+pca.data$color_group = c(rep("nuclear", 5), rep("total", 5), rep("fraction", 2))
+pca.data$sampleabbr = c("nG0", "nG1", "nS", "nG2", "nM_2"
+                        , "tG0", "tG1", "tS", "tG2", "tM","cS_1", "nsS_1")
+pca.data$sampleabbr = c("nG0", "nG1", "nS", "nG2", "nM"
+                        , "tG0", "tG1", "tS", "tG2", "tM","cytS", "nsolS")
+custom_colors <- c("nuclear" = "#FF5733",
+                   "total" = "deepskyblue1",
+                   "fraction" = "darkseagreen")
+
+# Create a PCA plot with colors and labels
+ggscatter(data = pca.data, 
+          x = "PC1", 
+          y = "PC2", 
+          color = "color_group",            # Color by the 'color_group' column
+          label = "sampleabbr",             # Label by the 'sample' column
+          ellipse = FALSE, 
+          size = 2, 
+          repel = TRUE, 
+          main = "PCA Plot" + theme_base()) +
+  scale_color_manual(values = custom_colors) + # Apply the custom colors
+  theme(legend.position = "bottom")
+
+
+```

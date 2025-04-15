@@ -1,0 +1,74 @@
+---
+title: "enhancers_highTPM"
+format: html
+editor: visual
+---
+
+
+## SOM TPM
+
+```{r}
+#enh_stronF_noTSS_wo_nM
+
+ggplot(enh_stronF_noTSS_wo_nM, aes(x = factor(SOM), y = median_tot, fill = factor(SOM))) +
+  geom_violin(trim = FALSE, alpha = 0.7) +        # Semi-transparent violin plot
+  geom_jitter(width = 0.2, size = 0.1, alpha = 0.2) + # Jitter for individual points
+  labs(x = "SOM", y = "Median of total signal (log10 scaled TPM)", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rotate x-axis labels if needed
+  ggtitle("Enhancer TPM of SOM Classes.") +
+  scale_y_log10(limits = c(1e-3, 1e2),
+                breaks = c(1e-3, 1e-2, 1e-1, 1, 1e1, 1e2)) # Set log10 scale
+
+
+```
+
+
+
+```{r}
+enh_strongF_noprom_SOM_highnuc = enh_stronF_noTSS_wo_nM[which(enh_stronF_noTSS_wo_nM$median_nuc >= 0.5),]
+enh_strongF_noprom_SOM_hightot = enh_stronF_noTSS_wo_nM[which(enh_stronF_noTSS_wo_nM$median_tot >= 0.5),]
+
+ggplot(enh_strongF_noprom_SOM_hightot, aes(x = factor(SOM))) +
+  geom_bar(color = "black", fill = "blue") +
+  labs(title = "Distribution of enhancers (tpm (total RNA)) >= 0.5)",
+       x = "SOM Values",
+       y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+
+ggplot(enh_strongF_noprom_SOM_hightot, aes(x = SOM, y = median_tot)) +
+  geom_point(color = "blue", size = 2) +  # Scatter plot
+  scale_x_continuous(breaks = seq(1, 25, by = 1), limits = c(1, 25)) +  # Set y-axis from 1 to 25
+  labs(title = "Enhancers total signal per SOM class (tpm >= 0.5)",
+       x = "SOM Classes",
+       y = "Total RNA signal") +
+  theme_minimal()
+
+
+```
+
+
+
+
+
+## SOM tpm > 0.5
+```{r}
+
+enh_highnuc_wo_nM = enh_strongF_noprom_SOM_highnuc[-5]
+# remove rows with value 0 in all columns
+enh_highnuc_wo_nM = enh_highnuc_wo_nM[rowSums(enh_highnuc_wo_nM[, 1:9]) != 0, ]
+
+nEnh_matrix = enh_highnuc_wo_nM[,c(1:9)]
+# scale matrix
+nEnh_matrix = t(base::scale(t(nEnh_matrix), center = F, scale = TRUE))
+
+set.seed(23)
+plot_som_nEnh = get_plot_som_colors(nEnh_matrix, 3, 3)
+
+enh_highnuc_wo_nM_SOM = enh_highnuc_wo_nM %>% cbind(as.data.frame(plot_som_nEnh$som$unit.classif))
+colnames(enh_highnuc_wo_nM_SOM)[28] = "SOM_wo_nM"
+enh_highnuc_wo_nM_SOM = enh_highnuc_wo_nM_SOM[-27]
+
+```

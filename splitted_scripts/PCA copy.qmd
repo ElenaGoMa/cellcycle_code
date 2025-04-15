@@ -1,0 +1,3453 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+cons_cluster = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+library(CAGEr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(rtracklayer)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+
+
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+```
+
+
+## PCA
+
+```{r}
+library(magrittr)
+library(ggpubr)
+library(ggplot2)
+library(ggthemes)
+
+Express_matrix<-as.data.frame(CTSSnormalizedTpmDF(cons_cluster))
+Coords_genome<-as.data.frame(CTSScoordinatesGR(cons_cluster))
+
+tpm_exp<-Express_matrix
+Coords_genome$uniqueID<-paste(Coords_genome$seqnames,Coords_genome$pos,Coords_genome$strand,sep = "_")
+rownames(tpm_exp)<-Coords_genome$uniqueID
+gene_list<-Coords_genome$uniqueID
+
+pca.info <- prcomp(tpm_exp, scale = T,
+                   center = TRUE, retx = T)
+screeplot(pca.info, npcs = 10, type = "lines")
+head(pca.info)
+summary(pca.info) #specific explanation ratio of each PC
+head(pca.info$rotation) #Feature vector, regression coefficient
+head(pca.info$sdev) #The square root of the eigenvalues
+head(pca.info$x) #sample score
+
+
+### total vs nuclear
+pca.data = data.frame(sample=rownames(pca.info$rotation),
+                     pca.info$rotation)
+pca.data$color_group = c(rep("nuclear", 5), rep("total", 5), rep("fraction", 2))
+pca.data$sampleabbr = c("nG0", "nG1", "nS", "nG2", "nM_2"
+                        , "tG0", "tG1", "tS", "tG2", "tM","cS_1", "nsS_1")
+pca.data$sampleabbr = c("nG0", "nG1", "nS", "nG2", "nM"
+                        , "tG0", "tG1", "tS", "tG2", "tM","cytS", "nsolS")
+custom_colors <- c("nuclear" = "#FF5733",
+                   "total" = "deepskyblue1",
+                   "fraction" = "darkseagreen")
+
+# Create a PCA plot with colors and labels
+ggscatter(data = pca.data, 
+          x = "PC1", 
+          y = "PC2", 
+          color = "color_group",            # Color by the 'color_group' column
+          label = "sampleabbr",             # Label by the 'sample' column
+          ellipse = FALSE, 
+          size = 2, 
+          repel = TRUE, 
+          main = "PCA Plot" + theme_base()) +
+  scale_color_manual(values = custom_colors) + # Apply the custom colors
+  theme(legend.position = "bottom")
+
+
+```
+
+## Export bigwig
+
+```{r}
+
+# Get the sample labels from cons_cluster
+sample_labels <- cons_cluster$sampleLabels
+
+# Loop through each sample and export the corresponding BigWig files
+for (sample in sample_labels) {
+  
+  # Generate the track for the current sample
+  trk <- exportToTrack(CTSSnormalizedTpmGR(cons_cluster, sample))
+  
+  # Add genome sequence length information
+  trk@seqinfo@seqlengths <- seqlengths(BSgenome.Hsapiens.UCSC.hg38)
+  
+  # Split track by strand
+  trk_split <- split(trk, strand(trk), drop = TRUE)
+  
+  # Define file paths for the plus and minus strand BigWig files
+  plus_bw_path <- paste0("~/Desktop/cellcycle/bw/pair_newsamples/", sample, ".plus.bw")
+  minus_bw_path <- paste0("~/Desktop/cellcycle/bw/pair_newsamples/", sample, ".minus.bw")
+  
+  # Export the plus and minus strands as BigWig files
+  rtracklayer::export.bw(trk_split$`+`, plus_bw_path, format = "BigWig")
+  rtracklayer::export.bw(trk_split$`-`, minus_bw_path, format = "BigWig")
+  
+  # Print message after each export (optional)
+  message("Exported BigWig files for sample: ", sample)
+}
+
+```
+
+## SOM PLOTTING
+
+Packages needed
+
+```{r, echo=F}
+install.packages("kohonen")
+
+library(kohonen)
+library(tidyverse)
+library(rtracklayer)
+library(dplyr)
+```
+
+Damir code for SOM
+
+This is a function that you have to execute empty. This is for creating the matrix needed and plotting the SOM
+
+```{r}
+
+get_plot_som <- function(in_mat, xdim, ydim){
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))
+  label_unit <- table(som_obj$unit.classif)
+  tmp_name <- names(label_unit)
+  label_unit <- str_c("Class ", tmp_name, " (", label_unit, ")")
+  names(label_unit) <- tmp_name
+  tmp_df <- in_mat %>% as.data.frame() %>%
+    {cbind(class = som_obj$unit.classif, .)} %>%
+    pivot_longer(cols = !class,
+                 names_to = "stage",
+                 values_to = "value") %>%
+    mutate(stage = factor(stage,
+                          levels = colnames(in_mat)),
+           class = factor(class,
+                          levels = str_sort(unique(class), numeric = T)))
+  sum_stat <- tmp_df %>% group_by(class, stage) %>%
+    summarize(value = mean(value)) %>% ungroup()
+  out_plot <- tmp_df%>%
+    ggplot(aes(stage, value)) + geom_violin() +
+    geom_point(data = sum_stat) +
+    geom_line(data = sum_stat, aes(group = class)) +
+    facet_wrap(~ class, ncol = xdim, labeller = labeller(class = label_unit),
+               scale = "free_y",as.table = F) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  list(som = som_obj,
+       stat = sum_stat,
+       plot = out_plot)
+}
+
+## Nuclear palette
+  my_palette <- c("#000004FF", "#000004FF", "#000004FF", "#781C6DFF", "#781C6DFF","#BB3754FF","#BB3754FF","#BB3754FF", "#FCB519FF", "#FCB519FF", "#FCFFA4FF")
+  my_palette <- c("#000004FF", "#330A5FFF", "#781C6DFF", "#BB3754FF", "#ED6925FF", "#FCB519FF", "#FCFFA4FF")
+  
+## Total palette
+my_palette <- c("#000004FF", "#000004FF", "#781C6DFF", "#781C6DFF","#BB3754FF","#BB3754FF", "#FCB519FF", "#FCB519FF", "#FCFFA4FF", "#FCFFA4FF")
+## Fraction palette
+  my_palette <- c("#440154FF", "#33638DFF", "#29AF7FFF", "#DCE319FF")
+
+
+
+get_plot_som_colors <- function(in_mat, xdim, ydim){
+  my_palette <- c("#000004FF", "#330A5FFF", "#781C6DFF", "#BB3754FF", "#ED6925FF")
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))
+  label_unit <- table(som_obj$unit.classif)
+  tmp_name <- names(label_unit)
+  label_unit <- str_c("Class ", tmp_name, " (", label_unit, ")")
+  names(label_unit) <- tmp_name
+  tmp_df <- in_mat %>% as.data.frame() %>%
+    {cbind(class = som_obj$unit.classif, .)} %>%
+    pivot_longer(cols = !class,
+                 names_to = "stage",
+                 values_to = "value") %>%
+    mutate(stage = factor(stage,
+                          levels = colnames(in_mat)),
+           class = factor(class,
+                          levels = str_sort(unique(class), numeric = T)))
+  sum_stat <- tmp_df %>% group_by(class, stage) %>%
+    summarize(value = mean(value)) %>% ungroup()
+  out_plot <- tmp_df%>%
+    ggplot(aes(stage, value, fill = stage)) + geom_violin() +
+    geom_point(data = sum_stat) +
+    geom_line(data = sum_stat, aes(group = class)) +
+    facet_wrap(~ class, ncol = xdim, labeller = labeller(class = label_unit),
+               scale = "free_y",as.table = F) +
+    theme_light() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values = my_palette)
+  list(som = som_obj,
+       stat = sum_stat,
+       plot = out_plot)
+}
+```
+
+This is a shorter version to get the matrix without plotting the SOM, so you can use the matrix in aweSOM and plot it differently
+
+```{r}
+get_damir_som <- function(in_mat, xdim, ydim){
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))}
+
+```
+
+Get consensuscluster tpm as input for SOM plotting
+
+```{r}
+
+concluTPM_5tpm = consensusClustersTpm(cons_cluster)
+
+## NUCLEAR SAMPLES
+
+concluTPM_nuc_5tpm = concluTPM_5tpm[,c(1:5)]
+# scale matrix
+matrix_nuclear_5tpm = t(base::scale(t(concluTPM_nuc_5tpm), center = F, scale = TRUE))
+set.seed(23)
+plot_som_nuclear_5tpm = get_plot_som_colors(matrix_nuclear_5tpm, 5, 5)
+
+
+
+## TOTAL SAMPLES
+
+concluTPM_tot_5tpm = concluTPM_5tpm[,c(6:10)]
+# scale matrix
+matrix_tot_5tpm = t(base::scale(t(concluTPM_tot_5tpm), center = F, scale = TRUE))
+set.seed(23)
+plot_som_tot_5tpm = get_plot_som_colors(matrix_tot_5tpm, 5, 5)
+
+
+
+## NUCLEAR FRACTIONATION
+
+concluTPM_Sfrac_5tpm = concluTPM_5tpm[,c(3,8,11,12)]
+concluTPM_Sfrac_5tpm = concluTPM_Sfrac_5tpm[,c("tS", "nS_A", "nS_B", "nS")]
+colnames(concluTPM_Sfrac_5tpm) = c("tS", "cytS", "nsolS", "nS")
+
+# scale matrix
+matrix_Sfrac_5tpm = t(base::scale(t(concluTPM_Sfrac_5tpm), center = F, scale = TRUE))
+
+set.seed(23)
+plot_som_Sfrac_5tpm = get_plot_som_colors(matrix_Sfrac_5tpm, 5, 5)
+```
+
+Transfer SOM information to consensusclusterGR
+
+```{r}
+library("ChIPseeker")
+totalSOM_consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster, sample = NULL, qLow = 0.1, qUp = 0.9)) %>% cbind(as.data.frame(plot_som_tot_5tpm$som$unit.classif))
+colnames(totalSOM_consclusterGR_df)[17] = "SOM"
+
+nuclearSOM_consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster, sample = NULL, qLow = 0.1, qUp = 0.9)) %>% cbind(as.data.frame(plot_som_nuclear_5tpm$som$unit.classif))
+colnames(nuclearSOM_consclusterGR_df)[17] = "SOM"
+
+fractionSOM_consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster, sample = NULL, qLow = 0.1, qUp = 0.9)) %>% cbind(as.data.frame(plot_som_Sfrac_5tpm$som$unit.classif))
+colnames(fractionSOM_consclusterGR_df)[17] = "SOM"
+
+```
+
+Preparing GRanges and SOMsuperclasses for heatmap
+
+```{r}
+# Prepare groups of clusters with similar profile
+
+G0_up_tclass = c(3,4,5,8,9,10)
+G0_up_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G0_up_tclass),]
+G0_down_tclass = c(11,16,17,22,23)
+G0_down_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G0_down_tclass),]
+S_tclass = c(12,24,25)
+S_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% S_tclass),]
+G2_tclass = c(2,18,19,23)
+G2_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G2_tclass),]
+flat_tclass = c(1,6,7)
+flat_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% flat_tclass),]
+M_down_tclass = c(13,14,19)
+M_down_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% M_down_tclass),]
+
+nucSup_class = c(1,2,6,7,8,11,12,16,17,18)
+nucSup = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% nucSup_class),]
+chrSdown_class = c(10,14,20)
+chrSdown = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% chrSdown_class),]
+
+frac1_class = c(5,21)
+frac1 = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% frac1_class),]
+
+#filter out non promoter cc and arrange by cluster and IWQ
+G0_up_t_IQW = G0_up_t %>% filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+G0_down_t_IQW = G0_down_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+S_t_IQW = S_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+G2_t_IQW = G2_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+flat_t_IQW = flat_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+M_down_t_IQW = M_down_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+nucSup_IQW = nucSup %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+chrSdown_IQW = chrSdown %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+frac1_IQW = frac1 %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+# From df to GR needed for heatmap. I am replacing the object to not copypaste too much
+
+tmp_IQW_GR = GRanges(seqnames = frac1_IQW$seqnames,
+                      ranges = IRanges(start = frac1_IQW$dominant_ctss.pos,
+                                       end = frac1_IQW$dominant_ctss.pos),
+                      strand = frac1_IQW$strand,
+                      score = frac1_IQW$score,
+                      interquantile_width = frac1_IQW$interquantile_width,
+                      seqlengths = seqlengths(txdb),
+                      SOM = frac1_IQW$SOM)
+
+```
+
+## HEATMAP
+
+```{r}
+
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+
+#position of switching superclasses
+group_pos2 = which(!duplicated(rev(tmp_IQW_GR$SOM))) - 0.5 # this calculates the positions where a new group starts
+
+
+
+#prepare data
+coords=c(-500, 500)
+windows<-promoters(tmp_IQW_GR, -coords[1], coords[2])
+seq<-getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+pattern_list<-c("GC","CG","SS","YCY","AT","TA","TATA")
+pattern<-PatternHeatmap(seq, pattern_list[6], coords=coords)
+pattern_smoothed<-smoothHeatmap(pattern,
+                                sigma = c(0.5,0.01),
+                                output.size=c(500,1000),
+                                algorithm="kernel")
+plotHeatmapList(pattern_smoothed,color="Reds")
+
+dev.flush() # to ensure that all plotting commands are executed before and after adding the lines
+
+for (pos in group_pos2) {
+  abline(h = pos, col = "black", lwd = 0.5)
+} # Add horizontal lines to the heatmap plot
+
+dev.flush()
+
+
+
+```
+
+## IQW plot
+
+```{r}
+barplot(rev(tmp_IQW_GR$interquantile_width), width=1,
+        , space= NULL, horiz = T, xlim = c(1,250))
+axis(1, at = seq(0, 600, by = 100))
+
+```
+
+## Metaplot
+
+```{r}
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+library(dplyr)
+library(heatmaps)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# Filter out non promoter consensus clusters TOTAL RNA
+consclust_total_SOM_prom = totalSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_total_SOM_prom[which(consclust_total_SOM_prom$SOM == 25),]
+# Filter out non promoter consensus clusters NUCLEAR RNA
+consclust_nuclear_SOM_prom = nuclearSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_nuclear_SOM_prom[which(consclust_nuclear_SOM_prom$SOM == 25),]
+# Filter out non promoter consensus clusters FRACTIONATION RNA
+consclust_fract_SOM_prom = fractionSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_fract_SOM_prom[which(consclust_fract_SOM_prom$SOM == 1),]
+dftogr=neighbor_background %>%
+  mutate(coordinate_start = ifelse(strand == "+", start, end),
+         coordinate_end = ifelse(strand == "+", end, start))
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+
+GR_metaplot = GRanges(seqnames = dftogr$seqnames,
+                      ranges = IRanges(start = dftogr$coordinate_end,
+                                       end = dftogr$coordinate_end),
+                      strand = dftogr$strand,
+                      score = dftogr$score,
+                      seqlengths = seqlengths(txdb))
+
+
+consClustGR_tmp = GR_metaplot
+Slidingwindow<-10 # you can define different size of window but it has to be dividible by 2 (next step)
+coords <-c(-50 - Slidingwindow/2, 50 + Slidingwindow/2) # you always have to divide the slidingwindow/2
+windows<-promoters(consClustGR_tmp, -coords[1], coords[2])
+seq <- getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+sample_number<-length(seq)
+pattern_list<-c("GC","CG","TA","AT", "AG", "AGG", "YTNAY")
+motif_par<-pattern_list[1]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+X<-colSums(pattern@image)
+motif_par<-pattern_list[2]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Y<-colSums(pattern@image)
+motif_par<-pattern_list[3]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Z<-colSums(pattern@image)
+motif_par<-pattern_list[4]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+N<-colSums(pattern@image)
+motif_par<-pattern_list[5]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+O<-colSums(pattern@image)
+motif_par<-pattern_list[6]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+P<-colSums(pattern@image)
+motif_par<-pattern_list[7]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Q<-colSums(pattern@image)
+X_sum<-data.frame(position=c(coords[1]:-1,1:coords[2]),
+                  "GC"=X,
+                  "CG"=Y, #SP
+                  "TA"=Z, # SP
+                  "AT"=N,
+                  "AG"=O,
+                  "AGG"=P,
+                  "YTNAY"=Q)
+X_sum
+slided_hits<-data.frame(position=c((coords[1]+Slidingwindow/2):-1,1:(coords[2]-Slidingwindow/2)),
+                        "GC"=NA,"CG"=NA,"TA"=NA,"AT"=NA, "AG"=NA, "AGG"=NA, "YTNAY"=NA)
+slide_tmp<-matrix(NA, nrow = (coords[2]*2-Slidingwindow),ncol=Slidingwindow+1)
+for (l in pattern_list) {
+  motif<-l
+  for (i in 1:(Slidingwindow+1)) {
+    range<-c(i:(nrow(X_sum)-Slidingwindow+i-1))
+    slide_tmp[,i]<-X_sum[range,motif]
+  }
+  slided_hits[,motif]<-rowSums(slide_tmp)/(Slidingwindow+1)
+}
+library(reshape)
+library(reshape2)
+slided_hits<-melt(slided_hits,id.vars = "position")
+slided_hits$type<-slided_hits$variable
+slided_hits$value<-slided_hits$value/nrow(as.data.frame(consClustGR_tmp)) #divided by nrow to normalise??
+
+metaplot_temp = ggplot(slided_hits
+,aes(x=position,
+     y=value,
+     color=variable))+
+  labs(title=paste0("Relative frequency of motif | Start of introns without signal |
+                    "," | N=",sample_number))+
+  xlab("Relative position")+
+  ylab("Relative frequency")+
+  #facet_wrap(.~type)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_vline(xintercept=c(0),lty=2,col="black",lwd=1)+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme_classic(base_size = 16)+
+  scale_colour_manual(values = c("orange1","red1", "blue3","cyan3","black","green2","purple","yellow","grey","royalblue2")) +
+  geom_point(aes(x = position, y = value, colour = variable)) +
+  scale_y_continuous(limits = c(0, 0.20), breaks = seq(0, 0.200, by = 0.025)) +
+  #geom_smooth(stat="smooth")
+  geom_line(data = slided_hits, aes(x = position, y = value))
+
+ggsave(filename = paste0("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/metaplot/fraction/Frac1_dinuc_metaplot.png"),height = 8,width = 8)
+print(metaplot_temp)
+
+
+```
+
+## SOM annotation
+
+```{r}
+library(ChIPseeker)
+consclusterGR_ann <- consensusClustersGR(cons_cluster, sample = NULL, qLow = 0.1, qUp = 0.9)
+consClusterGR_ChIPseeker <- annotatePeak(consclusterGR_ann,
+                                          TxDb = txdb,
+                                          tssRegion = c(-100, 50),
+                                          sameStrand = TRUE,
+                                          level = "transcript")
+
+
+consclustGR_annot_tmp <-as.data.frame(consClusterGR_ChIPseeker@anno) %>% cbind(as.data.frame(plot_som_nuclear_5tpm$som$unit.classif))
+colnames(consclustGR_annot_tmp)[25] = "SOM"
+
+
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Sample dataframe: consclust_total_SOM
+
+# Create a cleaned 'annotation_clean' column by extracting only relevant categories
+consclust_nuclear_SOM_annotclean <- consclustGR_annot_tmp %>%
+  mutate(annotation_clean = case_when(
+    grepl("^Exon", annotation) ~ "Exon",
+    grepl("^Intron", annotation) ~ "Intron",
+    grepl("^Promoter", annotation) ~ "Promoter",
+    grepl("^3' UTR", annotation) ~ "3' UTR",
+    grepl("^5' UTR", annotation) ~ "5' UTR",
+    grepl("^Distal Intergenic", annotation) ~ "Distal Intergenic",
+    TRUE ~ NA_character_
+  ))
+
+# Remove any rows with NA in the cleaned annotations (if any exist)
+consclust_nuclear_SOM_annotclean <- consclust_nuclear_SOM_annotclean %>%
+  filter(!is.na(annotation_clean))
+
+# Calculate the total number of rows for each SOM group
+som_nuclear <- consclustGR_annot_tmp %>%
+  group_by(SOM) %>%
+  summarise(total = n())
+
+# Summarize the data by SOM and annotation category
+summary_data <- consclust_nuclear_SOM_annotclean %>%
+  group_by(SOM, annotation_clean) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+# Merge the total counts back to the summary_data
+summary_data <- summary_data %>%
+  left_join(som_nuclear, by = "SOM") %>%
+  mutate(frequency = count / total)  # Calculate the frequency for each category
+
+# Plot the normalized barplot
+ggplot(summary_data, aes(x = factor(SOM), y = count, fill = annotation_clean)) + # you can change count by frequency
+  geom_bar(stat = "identity", position = "stack") +  # Stack bars for proportions
+  labs(x = "SOM", y = "Frequency", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels if necessary
+  ggtitle("Annotation of SOM classes. Nuclear RNA")
+
+```
+
+## SOM tpm
+
+```{r}
+
+consclust_total_SOM_prom
+consclust_nuclear_SOM_prom
+consclust_fract_SOM_prom
+intronsignal_conscluster_SOM25
+
+## VIOLIN PLOT
+
+# Violin plot with log10 scale and individual data points
+ggplot(consclust_nuclear_SOM_prom, aes(x = factor(SOM), y = score, fill = factor(SOM))) +
+  geom_violin(trim = FALSE, alpha = 0.7) +        # Semi-transparent violin plot
+  geom_jitter(width = 0.2, size = 0.1, alpha = 0.2) + # Jitter for individual points
+  labs(x = "SOM", y = "Log10(TPM)", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rotate x-axis labels if needed
+  ggtitle("TPM Distribution of SOM Classes. S phase RNA fractionation") +
+  scale_y_log10() # Set log10 scale
+
+
+
+
+#### BATPLOT
+# Summarize the data by SOM and annotation category
+summary_data <- consclust_total_SOM_prom %>%
+  group_by(SOM) %>%
+  summarise(median_tpm = mean(score, na.rm = T)) %>%
+  ungroup()
+
+
+# Plot the normalized barplot
+ggplot(summary_data, aes(x = factor(SOM), y = median_tpm, fill = factor(SOM))) +
+  geom_bar(stat = "identity", position = "stack") +  # Stack bars for proportions
+  labs(x = "SOM", y = "Frequency", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels if necessary
+  ggtitle("Mean TPM distribution of SOM classes. Total RNA") +
+  scale_y_continuous(limits = c(0, 3600), breaks = seq(0, 3500, by = 500))
+
+
+
+```
+
+## GO enrichment
+
+```{r}
+library(clusterProfiler)
+library("org.Hs.eg.db")
+library(ggplot2)
+library(stringr)
+odb<-org.Hs.eg.db
+
+class25 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 25),]
+class24 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 24),]
+class12 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 12),]
+intronsignal_conscluster_SOM5
+nMexpressed_noIntronS_GR_tpm
+tM_intronSignal_good_Iwidth
+nM_intronSignal_1GO
+nM_intronSignal_lowProm2
+common_streme3_fimo1 = as.data.frame(common_streme3_fimo1)
+consclust_fract_SOM_prom_for_GO <- consclust_fract_SOM_prom %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+frac1 = c(1,2,6,7,11,12)
+frac2 = c(4,5,9,10,14,20)
+nuc_high = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM %in% frac1),]
+nuc_low = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM %in% frac2),]
+frac1 = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM == 1),]
+fracn = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM == 25),]
+GO_lowexpressed_intronS = nM_intronSignal_lowProm_ensembl %>% distinct(nM_intronSignal_lowProm_ensembl$ensembl_gene_id)
+
+#clean gene name
+nMexpressed_noIntronS_for_GO <- nMexpressed_noIntronS_GR_tpm %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+nMexpressed_IntronS_for_GO <- tM_intronSignal_good_Iwidth %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+
+
+S.df<-bitr(unique(nM_intronSignal_lowProm2$genes),
+  fromType = as.character("SYMBOL"),
+  toType = "ENTREZID",
+  OrgDb = odb)
+
+S.df<-bitr(unique(nM_intronSignal_lowProm_ensembl$ensembl_gene_id),
+  fromType = as.character("ENSEMBL"),
+  toType = "ENTREZID",
+  OrgDb = odb)
+
+S5.ego<-enrichGO(gene = S.df$ENTREZID,
+                 OrgDb = odb,
+                 ont="BP",
+                 pvalueCutoff=0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff =0.1)
+                 
+#dotplot(S25.ego, showCategory=15, title =paste0("GO enrichment"), x="p.adjust", orderBy=log2("GeneRatio"))
+
+
+S5.ego.plot = S5.ego@result %>%
+  arrange(p.adjust) %>% 
+  head(10) %>%
+  mutate(Description = factor(Description, levels = rev(Description))) %>%
+  ggplot(aes(x=-log10(p.adjust), 
+             y= Description,
+             size=Count,
+             colour=-log10(p.adjust))) +
+    geom_point() +
+    ggtitle("Not expressed genes with intron signal (121 genes)") +
+    theme_classic() +
+    theme(axis.text.y = element_text(size=11))
+
+
+
+# get gene symbol from GO categories
+
+B <- as.data.frame(S25.ego@result[1,]) %>%
+  separate_rows(geneID, sep = "/")
+C <- as.data.frame(S25.ego@result[2,]) %>%
+  separate_rows(geneID, sep = "/")
+spl1 <- as.data.frame(S25.ego@result[7,]) %>%
+  separate_rows(geneID, sep = "/")
+spl2 <- as.data.frame(S25.ego@result[8,]) %>%
+  separate_rows(geneID, sep = "/")
+cs <- as.data.frame(S25.ego@result[5,]) %>%
+  separate_rows(geneID, sep = "/")
+mt <- as.data.frame(S25.ego@result[6,]) %>%
+  separate_rows(geneID, sep = "/")
+
+sp3 <- as.data.frame(S5.ego@result[5,]) %>%
+  separate_rows(geneID, sep = "/")
+sp4 <- as.data.frame(S5.ego@result[14,]) %>%
+  separate_rows(geneID, sep = "/")
+sp5 <- as.data.frame(S5.ego@result[16,]) %>%
+  separate_rows(geneID, sep = "/")
+sp6 <- as.data.frame(S5.ego@result[17,]) %>%
+  separate_rows(geneID, sep = "/")
+
+vs1 <- as.data.frame(S5.ego@result[1,]) %>%
+  separate_rows(geneID, sep = "/")
+vs2 <- as.data.frame(S5.ego@result[2,]) %>%
+  separate_rows(geneID, sep = "/")
+
+
+
+### FUNCTION TO CONVERT GENES
+convert_genes <- function(data, column, from_type, to_type, orgdb) {
+  bitr(data[[column]],
+       fromType = from_type,
+       toType = as.character(to_type),
+       OrgDb = orgdb)
+}
+
+# This can be done using the function above as show bellow
+GOgenes.df<-bitr((spl1$geneID),
+  fromType = "ENTREZID",
+  toType = as.character("SYMBOL"),
+  OrgDb = odb)
+
+GOgenes.df3 <- convert_genes(vs1, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df4 <- convert_genes(vs2, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df5 <- convert_genes(cs, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df6 <- convert_genes(mt, "geneID", "ENTREZID", "SYMBOL", odb)
+
+GOgenes.df7 <- convert_genes(sp3, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df8 <- convert_genes(sp4, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df9 <- convert_genes(sp5, "geneID", "ENTREZID", "SYMBOL", odb)
+GOgenes.df10 <- convert_genes(sp6, "geneID", "ENTREZID", "SYMBOL", odb)
+
+
+
+
+# Find the maximum length of the two columns
+max_length <- max(length(GOgenes.df3$SYMBOL), length(GOgenes.df4$SYMBOL))
+
+GO_Intr <- data.frame(
+  Ras_protein_signal_transduction = c(GOgenes.df3$SYMBOL, rep(NA, max_length - length(GOgenes.df3$SYMBOL))),
+  positive_regulation_of_GTPase_activity = c(GOgenes.df4$SYMBOL, rep(NA, max_length - length(GOgenes.df4$SYMBOL)))
+)
+
+
+# Find repeated genes in df of genes with and without intron signal
+# intersect(unique(unlist(GO_intronRecap_splicing)), unique(unlist(GO_nMexpr_noIntr_splicing)))
+# [1] "NPM1"   "HSPA8"  "DDX5"   "THRAP3" "FUS"    "TMBIM6" "DDX46"  "HNRNPC"  
+# not real intron signal: DDX5, FUS
+# DDX46 was not found in the new cc df, not even without filtering
+# you can find them in signal that has not beed assigned to SOM class 5
+intronsignal_cc_no5
+
+
+write.table(GO_intronRecap, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/GO_intronRecap_genes.csv", quote = F, 
+            col.names = T, row.names = F, sep = "\t")
+write.table(GO_intronRecap_splicing, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/GO_intronRecap_genes_splicing.csv", quote = F, 
+            col.names = T, row.names = F, sep = "\t")
+write.table(GO_Intr_splicing, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/GO_genes_intronS_splicing.csv", quote = F, 
+            col.names = T, row.names = F, sep = "\t")
+write.table(GO_Intr, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/GO_genes_intronS_vesicles.csv", quote = F, 
+            col.names = T, row.names = F, sep = "\t")
+
+```
+
+## Intron signal
+
+```{r}
+library(CAGEr)
+CTSS_intr <- filterLowExpCTSS(CTSS_norm, thresholdIsTpm = TRUE, nrPassThreshold = 1, threshold = 0.1)
+CTSS_intr <- distclu(CTSS_intr, maxDist = 20, keepSingletonsAbove = 0)
+CTSS_intr <- cumulativeCTSSdistribution(CTSS_intr, clusters = "tagClusters", useMulticore = T)
+CTSS_intr <- quantilePositions(CTSS_intr, clusters = "tagClusters", qLow = 0.1, qUp = 0.9)
+CTSS_intr <- aggregateTagClusters(CTSS_intr, tpmThreshold = 0.1, qLow = 0.1, qUp = 0.9, maxDist = 100)
+cluster_intr <- annotateConsensusClusters(CTSS_intr, gff)
+cluster_intr <- cumulativeCTSSdistribution(cluster_intr, clusters = "consensusClusters", useMulticore = TRUE)
+cluster_intr <- quantilePositions(cluster_intr, clusters = "consensusClusters", qLow = 0.1, qUp = 0.9, useMulticore = TRUE)
+
+cluster_lowthr_prom = distclu(CTSS_intr, maxDist = 20, keepSingletonsAbove = 0)
+cluster_lowthr_prom = cumulativeCTSSdistribution(cluster_lowthr_prom, clusters = "tagClusters", useMulticore = T)
+cluster_lowthr_prom = quantilePositions(cluster_lowthr_prom, clusters = "tagClusters", qLow = 0.1, qUp = 0.9)
+cluster_lowthr_prom = aggregateTagClusters(cluster_lowthr_prom, tpmThreshold = 0.1, qLow = 0.1, qUp = 0.9, maxDist = 100)
+cluster_lowthr_prom = annotateConsensusClusters(cluster_lowthr_prom, gff)
+cluster_lowthr_prom = cumulativeCTSSdistribution(cluster_lowthr_prom, clusters = "consensusClusters", useMulticore = TRUE)
+cluster_lowthr_prom = quantilePositions(cluster_lowthr_prom, clusters = "consensusClusters", qLow = 0.1, qUp = 0.9, useMulticore = TRUE)
+
+saveRDS(cluster_lowthr_prom, "/Users/egomezma/Desktop/cellcycle/R/new_elena/cluster_lowthr_prom.rds")
+
+# CTSS_intr_001 <- filterLowExpCTSS(CTSS_norm, thresholdIsTpm = TRUE, nrPassThreshold = 1, threshold = 0.01)
+# CTSS_intr_001 <- distclu(CTSS_intr_001, maxDist = 20, keepSingletonsAbove = 5)
+# CTSS_intr_001 <- cumulativeCTSSdistribution(CTSS_intr_001, clusters = "tagClusters", useMulticore = T)
+# View(as.data.frame(tagClustersGR(CTSS_intr_001, sample = "tM")))
+
+
+
+
+concluTPM_01tpm = consensusClustersTpm(cluster_intr)
+
+## TOTAL SAMPLES
+concluTPM_tot_01tpm = concluTPM_01tpm[,c(6:10)]
+concluTPM_tot_01tpm = concluTPM_tot_01tpm[!apply(concluTPM_tot_01tpm == 0, 1, all), ] # filter columns with 0 in all rows. In apply 1 means "row wise"
+# scale matrix
+matrix_tot_01tpm = t(base::scale(t(concluTPM_tot_01tpm), center = F, scale = TRUE))
+set.seed(23)
+plot_som_tot_01tpm = get_plot_som_colors(matrix_tot_01tpm, 5, 5)
+
+
+forintron_consclusterGR_df = as.data.frame(consensusClustersGR(cluster_intr, sample = NULL, qLow = 0.1, qUp = 0.9))
+forintron_consclusterGR_df2 <- forintron_consclusterGR_df[rownames(forintron_consclusterGR_df) %in% rownames(concluTPM_tot_01tpm), ] %>% cbind(as.data.frame(plot_som_tot_01tpm$som$unit.classif))
+colnames(forintron_consclusterGR_df2)[17] = "SOM"
+
+forintron_conclu_class5 = forintron_consclusterGR_df2[which(forintron_consclusterGR_df2$SOM == 5),]
+
+
+
+
+```
+
+## All intron data
+
+```{r}
+#### Intron regions
+#BiocManager::install("S4Vectors")
+library("S4Vectors")
+#BiocManager::install("Repitools")
+library("Repitools")
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# STEP1. Get intron coordinates per transcriptID
+
+# get intron coordinates by transcriptID
+inByTr = intronsByTranscript(txdb, use.names=TRUE)
+inByTr.gr = unlist(inByTr)
+transcriptID = names(inByTr.gr)
+inByTr.df = as.data.frame(inByTr.gr, row.names = NULL)
+inByTr.df$transcriptId = transcriptID
+
+# Remove version numbers from transcript IDs
+inByTr.df$transcriptId <- gsub("\\..*", "", inByTr.df$transcriptId)
+inByTr.df$intronID = paste(inByTr.df$seqnames, inByTr.df$start, inByTr.df$end, sep = "-")
+inByTr.df$intronID = factor(inByTr.df$intronID) # convert from character to factor
+canonical_chr <- "^chr([1-9]|1[0-9]|2[0-2]|X|Y)$"
+inByTr.df2 <- inByTr.df[grep(canonical_chr, as.character(inByTr.df$seqnames)), ] #remove non canonical chr
+inByTr.df2$seqnames <- factor(inByTr.df2$seqnames)
+
+
+## Transcript support level TSL
+library(biomaRt)
+# Connect to the Ensembl BioMart database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# Retrieve the transcript ID and transcript support level (TSL)
+transcript_data <- getBM(
+  attributes = c("ensembl_transcript_id", "transcript_tsl", "chromosome_name", "transcript_start",
+                 "transcript_end", "strand", "ensembl_gene_id", "entrezgene_id", "external_gene_name", "start_position", "end_position"),
+  mart = ensembl
+)
+# listAttributes(ensembl)
+
+# Filter out non canonical chromosomes
+canonical_chromosomes <- "^([1-9]|1[0-9]|2[0-2]|X|Y)$"
+transcript_data <- transcript_data[grep(canonical_chromosomes, transcript_data$chromosome_name), ]
+saveRDS(transcript_data, file = "~/Desktop/cellcycle/R/transcript_data.rds")
+
+# Transfer the tls value to the dataframe with all introns
+allintrons_tsl <- inByTr.df2 %>%
+  left_join(transcript_data %>% dplyr::select(ensembl_transcript_id, transcript_tsl, ensembl_gene_id, entrezgene_id, external_gene_name, chromosome_name, start_position, end_position, transcript_start, transcript_end), 
+            by = c("transcriptId" = "ensembl_transcript_id"))
+
+# Filter by tsl1
+allintrons_tsl1 = allintrons_tsl[which(allintrons_tsl$transcript_tsl == "tsl1"),]
+
+
+### remove duplicated introns from table
+intronID_tsl1 = allintrons_tsl1 %>% mutate(transcriptId = NULL) %>% mutate(transcript_tsl = NULL) %>% mutate(transcript_start = NULL) %>% mutate(transcript_end = NULL) %>% distinct(intronID, .keep_all = TRUE) #distinct eliminates duplicated rows
+# To be sure there are no duplicates:
+intronID_tsl1[duplicated(intronID_tsl1) | duplicated(intronID_tsl1, fromLast = TRUE), ]
+
+
+saveRDS(intronID_tsl1, "/Users/egomezma/Desktop/cellcycle/R/new_elena/intronID_tsl1.rds")
+
+
+
+
+# Step 1: Install and load the GenomicRanges package
+library(GenomicRanges)
+
+# Step 2: Convert bed_allintrons to GRanges
+allintrons_gr <- GRanges(
+  seqnames = intronID_tsl1$seqnames, 
+  ranges = IRanges(start = intronID_tsl1$start, end = intronID_tsl1$end),
+  strand = intronID_tsl1$strand,
+  intronID = intronID_tsl1$intronID,
+  gene_name = intronID_tsl1$external_gene_name
+)
+
+# Step 3: Convert M_forIntrons_SOM to GRanges (single positions are treated as ranges with width = 1)
+M_forIntrons_class5_gr <- GRanges(
+  seqnames = forintron_conclu_class5$dominant_ctss.seqnames,
+  ranges = IRanges(start = forintron_conclu_class5$dominant_ctss.pos, 
+                   end = forintron_conclu_class5$dominant_ctss.pos),
+  strand = forintron_conclu_class5$strand
+)
+
+# Step 4: Find overlaps between the two GRanges objects
+overlap_hits <- findOverlaps(M_forIntrons_class5_gr, allintrons_gr)
+
+# Step 5: Create a True/False column based on overlaps
+# Initialize the 'intron' column as FALSE
+forintron_conclu_class5$intron <- FALSE
+
+# Set 'intron' to TRUE for rows where there is an overlap. 8666 overlaps
+forintron_conclu_class5$intron[queryHits(overlap_hits)] <- TRUE
+nrow(forintron_conclu_class5[which(forintron_conclu_class5$intron == TRUE),])
+#Mtag_notIntron = forintron_conclu_class25[which(forintron_conclu_class25$intron == FALSE),]
+
+
+
+#####FOR WHOLE GR WITH ALL CLASSES, NOT ONLY 5
+
+# Step 2: Convert bed_allintrons to GRanges
+allintrons_gr <- GRanges(
+  seqnames = intronID_tsl1$seqnames, 
+  ranges = IRanges(start = intronID_tsl1$start, end = intronID_tsl1$end),
+  strand = intronID_tsl1$strand,
+  intronID = intronID_tsl1$intronID,
+  gene_name = intronID_tsl1$external_gene_name,
+  entrezid = intronID_tsl1$entrezgene_id
+)
+
+# Step 3: Convert M_forIntrons_SOM to GRanges (single positions are treated as ranges with width = 1)
+M_forIntrons_SOM_gr <- GRanges(
+  seqnames = forintron_consclusterGR_df2$dominant_ctss.seqnames,
+  ranges = IRanges(start = forintron_consclusterGR_df2$dominant_ctss.pos, 
+                   end = forintron_consclusterGR_df2$dominant_ctss.pos)
+)
+
+# Step 4: Find overlaps between the two GRanges objects
+overlap_hits <- findOverlaps(M_forIntrons_SOM_gr, allintrons_gr)
+
+
+# Step 5: Create a data frame with overlaps and the corresponding intronID values
+# - queryHits(overlap_hits): indexes in `M_forIntrons_SOM_gr`
+# - subjectHits(overlap_hits): indexes in `allintrons_gr`, used to get intronID
+overlap_df <- data.frame(
+  index = queryHits(overlap_hits),                           # index in `forintron_consclusterGR_df2`
+  intron = TRUE,                                             # TRUE for overlaps
+  intronID = mcols(allintrons_gr)$intronID[subjectHits(overlap_hits)]  # intronID from allintrons_gr
+)
+
+# Step 6: Join `overlap_df` back into `forintron_consclusterGR_df2`
+forintron_consclusterGR_df3 <- forintron_consclusterGR_df2 %>%
+  mutate(index = row_number()) %>%                           # Add row index to join on
+  left_join(overlap_df, by = "index") %>%                    # Join on index to add intron and intronID columns
+  mutate(intron = ifelse(is.na(intron), FALSE, intron))  # Set intron to FALSE if no overlap
+
+intronsignal_conscluster = forintron_consclusterGR_df3[forintron_consclusterGR_df3$intron == TRUE,]
+
+library(dplyr)
+library(tidyr)
+
+## include intron coordinates
+intronsignal_conscluster2 <- intronsignal_conscluster %>%
+  dplyr::select(-index, -intron) %>%                         # Remove columns 'index' and 'intron'
+  separate(intronID, into = c("chr_intron", "start_intron", "end_intron"), sep = "-") %>%  # Split 'intronID' column
+  mutate(across(start_intron:end_intron, as.numeric)) %>%    # Convert start and end columns to numeric
+  mutate(intronID = intronsignal_conscluster$intronID) %>%
+  dplyr::select(-chr_intron)                                 # Remove 'chr_intron' column
+
+
+# Filter those consclust whose dominant ctss is not +5 bp from start of intron or -5 bp from end of intron coordinate
+intronsignal_conscluster2 <- intronsignal_conscluster2 %>%
+  filter(!is.na(dominant_ctss.pos), !is.na(start_intron), !is.na(end_intron))
+
+
+intronsignal_conscluster3 <- intronsignal_conscluster2 %>%
+  filter(
+    dominant_ctss.pos < start_intron + 5 & dominant_ctss.pos >= start_intron |  
+    dominant_ctss.pos <= end_intron & dominant_ctss.pos > end_intron - 5 
+  )
+
+
+intronsignal_conscluster_SOM5 = intronsignal_conscluster3 %>% dplyr::filter(SOM == 5)
+
+# add gene length info
+intronsignal_conscluster_SOM5 <- intronsignal_conscluster_SOM5 %>%
+  left_join(intronID_tsl1 %>% select(intronID, external_gene_name, start_position, end_position), 
+            by = "intronID") %>% mutate(gene_length = end_position-start_position)
+
+saveRDS(intronsignal_conscluster_SOM5, "/Users/egomezma/Desktop/cellcycle/R/new_elena/intronsignal_conscluster_SOM5.rds")
+write.table(intronsignal_conscluster_SOM5, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/intronsignal_conscluster_SOM25", quote = F, 
+            col.names = T, row.names = F)
+
+## Have a look at those cc not assigned to class 25
+intronsignal_cc_no5 <- intronsignal_conscluster3 %>%
+  filter(SOM != 5)
+
+```
+
+## INTRON CALLING from ctss
+
+```{r}
+
+##### FROM INDIVIDUAL CTSS IN tM
+CTSSnorm_tM_df = as.data.frame(CTSSnormalizedTpmGR(cluster_intr, sample = "tM"))
+CTSSnorm_tM_GR = CTSSnormalizedTpmGR(cluster_intr, sample = "tM")
+
+
+overlap_hits <- findOverlaps(CTSSnorm_tM_GR, allintrons_gr)
+
+
+# Step 5: Create a data frame with overlaps and the corresponding intronID values
+# - queryHits(overlap_hits): indexes in `M_forIntrons_SOM_gr`
+# - subjectHits(overlap_hits): indexes in `allintrons_gr`, used to get intronID
+overlap_df <- data.frame(
+  index = queryHits(overlap_hits),                           # index in `forintron_consclusterGR_df2`
+  intron = TRUE,                                             # TRUE for overlaps
+  intronID = mcols(allintrons_gr)$intronID[subjectHits(overlap_hits)]  # intronID from allintrons_gr
+)
+
+# Step 6: Join `overlap_df` back into `CTSStag_tM_GR`
+CTSStag_tM_intronSignal_df <- CTSSnorm_tM_df %>%
+  mutate(index = row_number()) %>%                           # Add row index to join on
+  left_join(overlap_df, by = "index") %>%                    # Join on index to add intron and intronID columns
+  mutate(intron = ifelse(is.na(intron), FALSE, intron))  # Set intron to FALSE if no overlap
+
+CTSStag_tM_intronSignal_df = CTSStag_tM_intronSignal_df[CTSStag_tM_intronSignal_df$intron == TRUE,]
+
+
+
+CTSStag_tM_intronSignal_df <- CTSStag_tM_intronSignal_df %>%
+  dplyr::select(-index, -intron) %>%                         # Remove columns 'index' and 'intron'
+  separate(intronID, into = c("chr_intron", "start_intron", "end_intron"), sep = "-") %>%  # Split 'intronID' column
+  mutate(across(start_intron:end_intron, as.numeric)) %>%    # Convert start and end columns to numeric
+  mutate(intronID = CTSStag_tM_intronSignal_df$intronID) %>%
+  dplyr::select(-chr_intron)                                 # Remove 'chr_intron' column
+
+
+# Filter those consclust whose dominant ctss is at second nt of intron
+
+CTSStag_tM_intronSignal_2_df <- CTSStag_tM_intronSignal_df %>%
+  filter(
+    (strand == "+" & pos == start_intron + 1) |  
+    (strand == "-" & pos == end_intron - 1) 
+  )
+
+
+CTSStag_tM_intronSignal_2_df = CTSStag_tM_intronSignal_2_df %>% filter(score >= 0.1)
+
+
+
+##### FROM INDIVIDUAL CTSS IN tG2 so I can filter tM
+CTSSnorm_tG2_df = as.data.frame(CTSSnormalizedTpmGR(cluster_intr, sample = "tG2"))
+CTSSnorm_tG2_GR = CTSSnormalizedTpmGR(cluster_intr, sample = "tG2")
+
+# find overlaps between G2 CTSS and intron coordinates
+overlap_hits <- findOverlaps(CTSSnorm_tG2_GR, allintrons_gr)
+
+
+# Step 5: Create a data frame with overlaps and the corresponding intronID values
+# - queryHits(overlap_hits): indexes in `M_forIntrons_SOM_gr`
+# - subjectHits(overlap_hits): indexes in `allintrons_gr`, used to get intronID
+overlap_df <- data.frame(
+  index = queryHits(overlap_hits),                           # index in `forintron_consclusterGR_df2`
+  intron = TRUE,                                             # TRUE for overlaps
+  intronID = mcols(allintrons_gr)$intronID[subjectHits(overlap_hits)]  # intronID from allintrons_gr
+)
+
+# Step 6: Join `overlap_df` back into `CTSStag_tM_GR`
+CTSStag_tG2_intronSignal_df <- CTSSnorm_tG2_df %>%
+  mutate(index = row_number()) %>%                           # Add row index to join on
+  left_join(overlap_df, by = "index") %>%                    # Join on index to add intron and intronID columns
+  mutate(intron = ifelse(is.na(intron), FALSE, intron))  # Set intron to FALSE if no overlap
+
+CTSStag_tG2_intronSignal_df = CTSStag_tG2_intronSignal_df[CTSStag_tG2_intronSignal_df$intron == TRUE,]
+
+
+CTSStag_tG2_intronSignal_df <- CTSStag_tG2_intronSignal_df %>%
+  dplyr::select(-index, -intron) %>%                         # Remove columns 'index' and 'intron'
+  separate(intronID, into = c("chr_intron", "start_intron", "end_intron"), sep = "-") %>%  # Split 'intronID' column
+  mutate(across(start_intron:end_intron, as.numeric)) %>%    # Convert start and end columns to numeric
+  mutate(intronID = CTSStag_tG2_intronSignal_df$intronID) %>%
+  dplyr::select(-chr_intron)                                 # Remove 'chr_intron' column
+
+
+# Filter tG2 signal mapping at second nucleotides of introns
+CTSStag_tG2_intronSignal_df <- CTSStag_tG2_intronSignal_df %>%
+  filter(
+    (strand == "+" & pos == start_intron + 1) |  
+    (strand == "-" & pos == end_intron - 1) 
+  )
+CTSStag_tG2_intronSignal_filtered_df = CTSStag_tG2_intronSignal_df %>% filter(score >= 0.1)
+
+
+
+
+
+## filter tM according to G2 tpm
+matched_rows <- CTSStag_tM_intronSignal_2_df %>%
+  inner_join(CTSStag_tG2_intronSignal_filtered_df, by = c("seqnames", "pos"), suffix = c("_tM", "_tG2")) %>%
+  filter(score_tM < 2 * score_tG2)
+
+# Add a T/F column being F if M is greater than twice G2 tpm
+CTSStag_tM_intronSignal_filtered_df3 <- CTSStag_tM_intronSignal_2_df %>%
+  mutate(is_matched = (seqnames %in% matched_rows$seqnames & pos %in% matched_rows$pos))
+
+
+
+
+## filter by having many ctss at -15 and/or +15 bp from intron signal
+
+CTSSnorm_tM_df_01 = CTSSnorm_tM_df %>% filter(score >= 0.1)
+CTSStag_tM_intronSignal_filtered_df2
+
+
+# Expand the range for filtering
+filtered_expanded <- CTSStag_tM_intronSignal_filtered_df3 %>%
+  mutate(
+    start_range = pos - 15,
+    end_range = pos + 15
+  )
+
+# Perform a range join and count overlaps
+CTSStag_tM_intronSignal_filtered_df2_filt2 <- filtered_expanded %>%
+  rowwise() %>%
+  mutate(count_raw_positions = sum(CTSSnorm_tM_df_01$seqnames == seqnames & 
+                                   CTSSnorm_tM_df_01$pos >= start_range & CTSSnorm_tM_df_01$pos <= end_range))
+
+
+## FINAL TABLE WITH CTSS WHOSE TPM IS TWICE BIGGER IN M COMPARED TO G2 AND HAVE LESS THAN 10 CTSS AT +-15 BP 
+tM_intronSignal_good = CTSStag_tM_intronSignal_filtered_df2_filt2 %>% filter(
+  is_matched == "FALSE" & count_raw_positions < 10) %>%
+  dplyr::select(-is_matched, -start_range, -end_range, -count_raw_positions, -filteredCTSSidx)
+
+
+# add gene length info
+tM_intronSignal_good <- tM_intronSignal_good %>%
+  left_join(intronID_tsl1 %>% dplyr::select(intronID, ensembl_gene_id, entrezgene_id, external_gene_name, start_position, end_position), 
+            by = "intronID") %>% mutate(gene_length = end_position - start_position)
+
+
+tM_intronSignal_good_unique = tM_intronSignal_good %>%
+  distinct(seqnames, pos, strand, .keep_all = TRUE) #Ensures that all other columns in the dataframe are retained in the result
+
+```
+
+## Intron width
+
+```{r}
+# Calculate intron width
+intronsignal_conscluster_SOM5 = intronsignal_conscluster_SOM5 %>% mutate(intron_width = end_intron - start_intron) %>%
+  arrange(intron_width)
+
+tM_intronSignal_good_Iwidth = tM_intronSignal_good_unique %>%
+  mutate(intron_width = end_intron - start_intron) %>%
+  arrange(intron_width)
+
+# Histogram intron width
+library(ggplot2)
+  
+ggplot(intronsignal_conscluster_SOM5, aes(x=(intron_width))) +
+  theme_classic() +
+  geom_histogram(aes(y = ..count.. / sum(..count..)), color="black", fill="lightblue")  +
+  scale_x_log10() +
+  ylim(0,0.15) +
+  ggtitle("Intron with signal. Intron width") +
+  ylab("Frequency") +
+  xlab("Log10(Intron Width)")
+
+## Randomly select 500 introns from all introns df
+set.seed(300)
+randomIntrons = intronID_tsl1[sample(1:nrow(intronID_tsl1), 10000, replace = F),]
+# random introns width
+randomIntrons = randomIntrons %>% mutate(intron_width = end - start)
+
+#Plot histogram of random introns
+ 
+ggplot(randomIntrons, aes(x = (intron_width))) +
+  theme_classic() +
+  geom_histogram(aes(y = ..count.. / sum(..count..)), color="black", fill="darksalmon") +
+  scale_x_log10() +
+  ylim(0,0.15) +
+  ggtitle("Random introns. Intron width frequency") +
+  ylab("Frequency") +
+  xlab("Log10(Intron Width)")
+
+
+library(dplyr)
+library(ggplot2)
+
+
+###### COMBINED HISTOGRAMS
+
+# Add a new column to each dataset to indicate which group it belongs to
+tM_intronSignal_good_Iwidth$group = "Intron Signal"
+randomIntrons$group = "Random introns"
+
+# Plot the two histograms with separate datasets and a custom legend
+combined_hist = ggplot() +
+  
+  # First histogram: Genes with signal in introns (blue)
+  geom_histogram(data = tM_intronSignal_good_Iwidth, 
+                 aes(x = intron_width, y = ..count.. / sum(..count..), fill = group), 
+                 color = "black", bins = 60, alpha = 0.4) +
+  
+  # Second histogram: Random genes (red)
+  geom_histogram(data = randomIntrons, 
+                 aes(x = intron_width, y = ..count.. / sum(..count..), fill = group), 
+                 color = "black", bins = 60, alpha = 0.4) +
+  # 
+  # # Add vertical lines at the mean gene sizes
+  # geom_vline(aes(xintercept = mean_gene_size_intronS), color = "blue", linetype = "dashed", linewidth = 1) + 
+  # geom_vline(aes(xintercept = mean_gene_size_randomG), color = "red", linetype = "dashed", linewidth = 1) +
+  
+  # Set the same scaling for the X-axis (log scale)
+  scale_x_log10() +
+  
+  # Set the Y-axis limits and titles
+  ylim(0, 0.08) +
+  labs(x = "Log10(Intron Size)", y = "Count Frequency", title = "Intron Sizes") +
+  
+  # Apply a classic theme
+  theme_classic() +
+  
+  # Add the custom fill colors and labels for the legend
+  scale_fill_manual(name = "Intron sets", 
+                    values = c("Intron Signal" = "blue", "Random introns" = "red")) +
+  
+  # Adjust the legend position
+  theme(legend.position = "top", 
+        legend.title = element_text(size = 10), 
+        legend.text = element_text(size = 8))
+
+```
+
+## Gene length
+
+I have detected 6767 introns with signal in M phase corresponding to 2607 different genes that are represented in this plot. It was selected a set of 5000 random genes as control
+
+```{r}
+intronsignal_conscluster_SOM5
+tM_intronSignal_good_Iwidth
+intronID_tsl1
+
+# Randomly select 5000 introns from all introns df
+unique_genes = intronID_tsl1[!duplicated(intronID_tsl1$external_gene_name), ]
+set.seed(300)
+randomGenes = unique_genes[sample(1:nrow(unique_genes), 5000, replace = F),]
+randomGenes = randomGenes %>% mutate(gene_size = end_position - start_position)
+hist_LoggeneSize_random = ggplot(randomGenes, aes(x=(gene_size))) +
+  theme_classic() +
+  geom_histogram(aes(y = ..count.. / sum(..count..)), color="black", fill="darksalmon", bins = 50) +
+  scale_x_log10(limits = c(1e+02, 1e+07)) +
+  labs(x = "Log10(Gene Size)", y = "Count Frequency") +
+  ylim(0, 0.12) + 
+  ggtitle("Random gene size frequency")
+
+
+uniqueGenes_intrS = tM_intronSignal_good_Iwidth[!duplicated(tM_intronSignal_good_Iwidth$external_gene_name),]
+
+hist_LoggeneSize_signal = ggplot(uniqueGenes_intrS, aes(x=(gene_length))) +
+  theme_classic() +
+  geom_histogram(aes(y = ..count.. / sum(..count..)), color="black", fill="blue", bins = 60) +
+  scale_x_log10(limits = c(1e+02, 1e+07)) +
+  labs(x = "Log10(Gene Size)", y = "Count Frequency") +
+  ylim(0, 0.12) + 
+  ggtitle("Intron signal gene size frequency")
+
+
+###### COMBINED HISTOGRAMS
+
+# Add a new column to each dataset to indicate which group it belongs to
+uniqueGenes_intrS$group = "Intron Signal"
+randomGenes$group = "Non Intron Signal"
+
+# Plot the two histograms with separate datasets and a custom legend
+combined_hist2 = ggplot() +
+  
+  # First histogram: Genes with signal in introns (blue)
+  geom_histogram(data = uniqueGenes_intrS, 
+                 aes(x = gene_length, y = ..count.. / sum(..count..), fill = group), 
+                 color = "black", bins = 60, alpha = 0.4) +
+  
+  # Second histogram: Random genes (red)
+  geom_histogram(data = randomGenes, 
+                 aes(x = gene_size, y = ..count.. / sum(..count..), fill = group), 
+                 color = "black", bins = 60, alpha = 0.4) +
+  
+  # # Add vertical lines at the mean gene sizes
+  # geom_vline(aes(xintercept = mean_gene_size_intronS), color = "blue", linetype = "dashed", linewidth = 1) + 
+  # geom_vline(aes(xintercept = mean_gene_size_randomG), color = "red", linetype = "dashed", linewidth = 1) +
+  
+  # Set the same scaling for the X-axis (log scale)
+  scale_x_log10(limits = c(1e+02, 1e+07)) +
+  
+  # Set the Y-axis limits and titles
+  ylim(0, 0.12) +
+  labs(x = "Log10(Gene Size)", y = "Count Frequency", title = "Gene Sizes") +
+  
+  # Apply a classic theme
+  theme_classic() +
+  
+  # Add the custom fill colors and labels for the legend
+  scale_fill_manual(name = "Gene Sets", 
+                    values = c("Intron Signal" = "blue", "Non Intron Signal" = "red")) +
+  
+  # Adjust the legend position
+  theme(legend.position = "top", 
+        legend.title = element_text(size = 10), 
+        legend.text = element_text(size = 8))
+
+
+## Kolmogorov-Smirnov Test
+library(stats)
+
+ks.test(uniqueGenes_intrS$gene_length, randomGenes$gene_size, alternative = c("two.sided"))
+
+```
+
+## scatter intron with without signal
+
+```{r}
+
+
+
+intronID_tsl1 <- intronID_tsl1 %>%
+  mutate(intron_match = intronID %in% tM_intronSignal_good_Iwidth$intronID) %>% mutate(gene_length = end_position-start_position)
+
+
+
+# SCATTER PLOT
+# extract all information of genes with intronic signal
+genes_intron_signal = intronID_tsl1 %>%
+  group_by(external_gene_name) %>%                    # Group by 'external_gene_name'
+  mutate(gene_signal = any(intron_match == TRUE)) %>%        # Assign TRUE if any 'match' is TRUE, otherwise FALSE
+  ungroup() %>% filter(gene_signal == T)
+
+
+genes_intron_signal_summary <- genes_intron_signal %>% 
+  distinct(external_gene_name, intronID, .keep_all = TRUE) %>% #see note above
+  group_by(external_gene_name) %>%
+  summarise(
+    num_introns_wo_signal = sum(intron_match == FALSE),  # Count the number of FALSE
+    num_introns_with_signal = sum(intron_match == TRUE)) %>%
+  ungroup() %>% slice(-1) #slice 1 to remove the first row with no value for genename
+# There are some genes with many transcript variants, for those ones some introns were repeated as many times as transcripts and as result FN1 gene had 300 introns. I filtered the data to obtain unique introns per genes. Note that some genes may have 50 introns but not of them belong to the same transcript variant. The problem is that I cannot select a single transcript variant.
+
+# Create the scatter plot
+scatter_plot <- ggplot(genes_intron_signal_summary, aes(x = num_introns_wo_signal, y = num_introns_with_signal)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Add points for each gene
+  labs(x = "Number of introns without signal", y = "Number of introns with signal", 
+       title = "Number of introns with or without signal per gene") +
+  theme_classic() 
+
+
+
+
+
+### Label dots
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+# Identify the top 5 genes based on each criterion
+top_genes <- genes_intron_signal_summary %>%
+  arrange(desc(num_introns_wo_signal)) %>%
+  slice(1:5) %>%
+  bind_rows(
+    genes_intron_signal_summary %>%
+      arrange(desc(num_introns_with_signal)) %>%
+      slice(1:15)
+  ) %>%
+  distinct(external_gene_name, .keep_all = TRUE)  # Keep unique genes only
+
+# Create the scatter plot with improved labels
+scatter_plot <- ggplot(genes_intron_signal_summary, aes(x = num_introns_wo_signal, y = num_introns_with_signal)) +
+  geom_point(color = "blue") +
+  #geom_smooth(method = "lm", color = "red", se = FALSE, lwd = 0.5) +
+  labs(x = "Number of introns without signal", y = "Number of introns with signal", 
+       title = "Number of introns with or without signal per gene") +
+  theme_classic() +
+  # Add labels using ggrepel for better placement
+  geom_text_repel(data = top_genes, aes(label = external_gene_name), color = "darkred")
+
+# Display the plot
+print(scatter_plot)
+
+
+
+```
+
+## Intron vs genes tpm
+
+```{r}
+#BiocManager::install("DESeq2")
+
+intronsignal_conscluster_SOM5
+tM_intronSignal_good_unique
+tM_intronSignal_good_Iwidth
+# I first used this cons_cluster but I didnt find many genes here because some might be low expressed and did not pass the filter applied used to call conscluster here. I will use the CAGEexp with very low threshold I used to call intron signal
+#consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster))
+conscluster_lowthresh = as.data.frame(consensusClustersGR(cluster_lowthr_prom))
+consclusterTPM_lowthresh = as.data.frame(consensusClustersTpm(cluster_lowthr_prom))
+
+#cctest = as.data.frame(consensusClustersTpm(cluster_intr))
+
+conscluster_GR_tpm_lowthr = cbind(conscluster_lowthresh, consclusterTPM_lowthresh)
+
+### NEW assign transcript id to these consensus clusters
+## Assign geneId to each consensuscluster
+
+txdb.ensembl = makeTxDbFromGFF(file = "~/Desktop/reference_genome/ENSEMBL/Homo_sapiens.GRCh38.113.gtf",format = "gtf",
+                               dataSource = "https://ftp.ensembl.org/pub/release-113/gtf/homo_sapiens/",
+                               organism = "Homo sapiens")
+#seqlevels(txdb.ensembl) is 1, 2 (instead of chr1, chr2). Here is how I changed it and removed non canonical chr
+newSeqNames <- paste('chr', seqlevels(txdb.ensembl), sep = '')
+names(newSeqNames) <- seqlevels(txdb.ensembl)
+txdb.ensembl <- renameSeqlevels(txdb.ensembl, newSeqNames)
+keepSeqlevels(x = txdb.ensembl,value = seqlevels(txdb.ensembl)[1:24]) # keep canonical chromosomes
+seqlevels(txdb.ensembl) # to check sequence levels
+
+
+conscluster_GR_lowTPM = consensusClustersGR(cluster_lowthr_prom)
+
+## ENSEMBL ANNOTATION TURNED TO WORK BETTER THAN UCSC
+conscluster_GR_tpm_lowthr_annensembl <- annotatePeak(conscluster_GR_lowTPM,
+                                          TxDb = txdb.ensembl,
+                                          tssRegion = c(-500, 200), #c(-500, 100),
+                                          sameStrand = TRUE,
+                                          level = "transcript",
+                                          genomicAnnotationPriority = c("Promoter", "5UTR", "3UTR",
+                                                                   "Exon", "Intron",
+                                                                   "Downstream", "Intergenic"))
+consclust_df_lowTPM_annotensembl <-as.data.frame(conscluster_GR_tpm_lowthr_annensembl@anno)
+
+conscluster_GR_tpm_lowthr_annucsc <- annotatePeak(conscluster_GR_lowTPM,
+                                          TxDb = txdb,
+                                          tssRegion = c(-500, 200), #c(-500, 100),
+                                          sameStrand = TRUE,
+                                          level = "transcript",
+                                          genomicAnnotationPriority = c("Promoter", "5UTR", "3UTR",
+                                                                   "Exon", "Intron",
+                                                                   "Downstream", "Intergenic"))
+consclust_df_lowTPM_annotucsc <-as.data.frame(conscluster_GR_tpm_lowthr_annucsc@anno)
+
+### INVERTED STRAND AFTER ANNOTATING!!!!! 
+View(consclust_df_lowTPM_annot[( 
+     (consclust_df_lowTPM_annot$dominant_ctss.strand == "+" & consclust_df_lowTPM_annot$geneStrand == "2") |
+         (consclust_df_lowTPM_annot$dominant_ctss.strand == "-" & consclust_df_lowTPM_annot$geneStrand == "1")
+ ), ])
+View(consclust_df_lowTPM_annotensembl[( 
+     (consclust_df_lowTPM_annotensembl$dominant_ctss.strand == "+" & consclust_df_lowTPM_annotensembl$geneStrand == "2") |
+         (consclust_df_lowTPM_annotensembl$dominant_ctss.strand == "-" & consclust_df_lowTPM_annotensembl$geneStrand == "1")
+ ), ])
+
+
+### Prepare the df with the ANNOTATION FROM ENSEMBL!!!!!!
+## Add tpm score per sample to each consensus cluster
+consclust_df_lowTPM_ensembl_samples = cbind(consclust_df_lowTPM_annotensembl, consclusterTPM_lowthresh)
+
+# Match recapped introns info with TPM of consensus clusters by entrezid
+# First I need to convert recapped introns df into a GRanges, then annotate them using chipseeker, transform it again into a df and last merge both df (promoter and intron signal) by GeneId (instead of gene name as I did before).
+
+consclust_df_lowTPM_ensembl_samples$median_phases <- apply(consclust_df_lowTPM_ensembl_samples[, 24:35], 1, median, na.rm = TRUE)
+# Filter the consclust with highest median
+consclust_df_lowTPM_ensembl_samples_oneprom <- consclust_df_lowTPM_ensembl_samples %>%
+  filter(str_starts(annotation, "Promoter")) %>%
+  group_by(geneId) %>%
+  slice_max(median_phases, with_ties = FALSE) %>% #with_ties=F ensures only one row is kept per group
+  ungroup()
+
+# Filter conscluster annotated at promoters of genes with intron recapping
+conspromLowTPM_intronS_ensembl = consclust_df_lowTPM_ensembl_samples_oneprom %>%
+  filter(geneId %in% tM_intronSignal_good_unique$ensembl_gene_id)
+
+
+
+
+
+
+
+
+
+
+### Prepare for plotting
+TPM_genes_withIntronS_nuclear = conspromLowTPM_intronS[24:28]
+TPM_genes_withIntronS_total = conspromLowTPM_intronS[29:33]
+
+
+library(tidyr)
+# transform the dataframe into a two columns dataframe (stage and TPM)
+TPM_long <- TPM_genes_withIntronS_nuclear %>%
+  pivot_longer(cols = everything(),   # Convert all columns to long format
+               names_to = "Stage",     # New column for gene names (column headers)
+               values_to = "TPM") %>%    # New column for TPM values
+  filter(is.finite(TPM) & TPM > 0)
+# Set the order of the 'Gene' factor to maintain original column order
+TPM_long$Stage <- factor(TPM_long$Stage, levels = colnames(TPM_genes_withIntronS_nuclear))
+
+
+
+# Create the violin plot
+violin_plot <- ggplot(TPM_long, aes(x = Stage, y = TPM)) +
+  geom_violin(fill = "lightcyan", color = "black") +  # Add violins
+  geom_jitter(width = 0.2, size = 0.01, alpha = 0.3, color = "blue") +  # Add points for each value
+  scale_y_log10(limits = c(1e-03, 1e+04)) +  # Set y-axis to log10 scale
+  labs(x = "Stage", y = "Log10(TPM)", title = "Expression of genes with recapped introns") +
+  theme_classic() +  # Use classic theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+violin_plot <- ggplot(TPM_long, aes(x = Stage, y = TPM)) +
+  geom_violin(fill = "lightblue", color = "black") +  # Add violins
+  geom_jitter(width = 0.2, size = 0.01, alpha = 0.3, color = "blue") +  # Add points for each value
+  scale_y_log10(limits = c(1e-03, 1e+04)) +  # Set y-axis to log10 scale
+  labs(x = "Stage", y = "Log10(TPM)", title = "Expression of genes with recapped introns") +
+  theme_classic() +  # Use classic theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+
+# Display the plot
+print(violin_plot)
+
+
+
+
+
+#### DESeq2 differential expression analysis
+
+cluster_intr_subset <- cluster_intr[, cluster_intr@colData@rownames %in% c("nG2", "nM_2")]
+cluster_intr_subset$group = c("G2", "M")
+dds = consensusClustersDESeq2(cluster_intr_subset, ~group)
+dds@assays@data$counts
+
+
+cluster_intr_subset <- subset(cluster_intr, sampleLabels(cluster_intr) %in% c("nG2", "nM_2"))
+cluster_intr_subset$group = c("nG2_merged", "nM_2_merged")
+
+dds2 = consensusClustersDESeq2(cluster_intr)
+
+
+### tpm of a random set of genes of nM to check whether the tail is shorter too because the library is smaller
+
+conscluster_GR_tpm_lowthr
+nM_random = conscluster_GR_tpm_lowthr %>% filter(annotation == "promoter")
+nM_random$median_16_to_25 <- apply(nM_random[, 16:25], 1, median, na.rm = TRUE)
+# Filter the consclust with highest median
+nM_random <- nM_random %>%
+  group_by(genes) %>%
+  slice_max(median_16_to_25, with_ties = FALSE) %>% #with_ties=F ensures only one row if kept per group
+  ungroup()
+
+set.seed(30)
+random_nM_ns = nM_random[sample(1:nrow(nM_random), 2500, replace = F),]
+nM_ns_test = random_nM_ns[16:20]
+
+TPM_long2 <- nM_ns_test %>%
+  pivot_longer(cols = everything(),   # Convert all columns to long format
+               names_to = "Stage",     # New column for gene names (column headers)
+               values_to = "TPM") %>%    # New column for TPM values
+  filter(is.finite(TPM) & TPM > 0)
+# Set the order of the 'Gene' factor to maintain original column order
+TPM_long2$Stage <- factor(TPM_long2$Stage, levels = colnames(nM_ns_test))
+
+
+violin_plot_test <- ggplot(TPM_long2, aes(x = Stage, y = TPM)) +
+  geom_violin(fill = "lightcyan", color = "black") +  # Add violins
+  geom_jitter(width = 0.2, size = 0.01, alpha = 0.3, color = "blue") +  # Add points for each value
+  scale_y_log10(limits = c(1e-03, 1e+04)) +  # Set y-axis to log10 scale
+  labs(x = "Stage", y = "Log10(TPM)", title = "Expression of random genes") +
+  theme_classic() +  # Use classic theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+  
+nM_random_sig = nM_random %>% filter(nM_2 >= 1)
+set.seed(30)
+random_nM_s = nM_random_sig[sample(1:nrow(nM_random_sig), 2500, replace = F),]
+nM_s_test = random_nM_s[16:20]
+
+TPM_long <- nM_s_test %>%
+  pivot_longer(cols = everything(),   # Convert all columns to long format
+               names_to = "Stage",     # New column for gene names (column headers)
+               values_to = "TPM") %>%    # New column for TPM values
+  filter(is.finite(TPM) & TPM > 0)
+# Set the order of the 'Gene' factor to maintain original column order
+TPM_long$Stage <- factor(TPM_long$Stage, levels = colnames(nM_ns_test))
+
+
+
+
+```
+
+## Correlation prom intron
+
+I want to study correlation between intensity of intron signal and the expression level of their promoter
+
+```{r}
+# First, I add a column with the promoter TPM to each gene of the table containing intron signal info
+tM_intronSignal_good_unique
+consclust_df_lowTPM_ensembl_samples_oneprom
+
+# PREPARE DF FROM ENSEMBL ANNOTATION OF CONSENSUS PROMOTERS
+M_intronSignal_prom_ensembl = tM_intronSignal_good_unique %>%
+  left_join(
+    consclust_df_lowTPM_ensembl_samples_oneprom %>%
+      dplyr::select(geneId, nM_2, tM), 
+    by = c("ensembl_gene_id" = "geneId")
+  )
+
+##### There are 195 intron signal with NA on promoter expression. Meaning that these genes are not expressed in any cell cycle phase
+View(M_intronSignal_prom_ensembl[is.na(M_intronSignal_prom_ensembl$tM), ])
+
+
+# I want to add 0 to these rows but not lost the NA information so I will add a column called NA with T and F
+M_intronSignal_prom_ensembl = M_intronSignal_prom_ensembl %>%
+  mutate(
+    NA_expression = if_else(is.na(tM) | is.na(nM_2), T, F),
+    tM = if_else(is.na(tM), 0, tM),
+    nM_2 = if_else(is.na(nM_2), 0, nM_2)
+  )
+# transfrorm 0 to pseudo0
+M_intronSignal_prom_ensembl = M_intronSignal_prom_ensembl %>%
+  mutate(tM = ifelse(tM == 0, 1e-3, tM),
+        nM_2 = ifelse(nM_2 == 0, 1e-3, nM_2))
+
+
+
+
+
+
+# Regular correlation plot
+ggplot(M_intronSignal_prom_ensembl, aes(x = nM_2, y = score)) +
+  geom_point(alpha = 0.5, color = "blue", size = 0.5) +  # Scatter points
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Add regression line
+  scale_x_log10(limits = c(0.001, 15000)) +  # Apply log10 scale to x-axis
+  scale_y_log10() +
+  labs(
+    title = "Correlation intron vs nM promoter signal",
+    x = "Promoters TPM (log scale)",
+    y = "Intron signal TPM (log scale)"
+  ) +
+  theme_minimal()
+
+# Perform Pearson correlation analysis
+cor_result <- cor.test(M_intronSignal_prom$tM, 
+                       M_intronSignal_prom$score, 
+                       method = "pearson")
+cor_result <- cor.test(M_intronSignal_prom$nM_2, 
+                       M_intronSignal_prom$score, 
+                       method = "pearson")
+
+
+# combined correlation
+M_intronSignal_good_Iwidth_2_prom = nM_intronSignal_good_Iwidth_2_prom %>%
+  cbind(tM_intronSignal_good_Iwidth_2_prom$tM) %>%
+  mutate(tM = tM_intronSignal_good_Iwidth_2_prom$tM) %>%
+  dplyr::select(-"tM_intronSignal_good_Iwidth_2_prom$tM")
+
+
+ggplot() +
+  geom_point(
+    data = M_intronSignal_prom, 
+    aes(x = nM_2, y = score, color = "nM_2"), 
+    alpha = 0.5, 
+    size = 0.5
+  ) +
+  geom_point(
+    data = M_intronSignal_prom, 
+    aes(x = tM, y = score, color = "tM"), 
+    alpha = 0.5, 
+    size = 0.5
+  ) +
+  scale_x_log10(limits = c(0.001, 15000)) +  # Apply log10 scale to x-axis
+  scale_y_log10() +  # Apply log10 scale to y-axis
+  labs(
+    title = "Combined Scatter Plot: nM_2 and tM",
+    x = "Promoters TPM (log scale)",
+    y = "Intron signal TPM (log scale)",
+    color = "Column"
+  ) +
+  scale_color_manual(
+    values = c("nM_2" = "blue", "tM" = "red"),
+    labels = c("nM_2 Points", "tM Points")
+  ) +
+  theme_minimal()
+
+
+
+
+
+M_intronSignal_prom_ensembl
+# Get very low expressed genes in nM
+nM_intronSignal_lowProm_ensembl = M_intronSignal_prom_ensembl %>%
+  dplyr::filter(nM_2 <= 0.001) %>%
+  arrange(nM_2, external_gene_name, desc(score))
+# filter by high promoter signal
+nM_intronSignal_highProm_ensembl = M_intronSignal_prom_ensembl %>%
+  dplyr::filter(nM_2 >= 300) %>%
+  arrange(nM_2, external_gene_name, desc(score))
+# filter by high intron signal
+nM_highintronSignal_Prom_fasta_ensembl = M_intronSignal_prom_ensembl %>%
+  dplyr::filter(score >= 1) %>%
+  arrange(nM_2, external_gene_name, desc(score))
+
+nM_highintronSignal_Prom_ensembl <- M_intronSignal_prom_ensembl %>%
+  group_by(external_gene_name) %>%
+  filter(any(score >= 2.5)) %>%  # Keep all rows for genes with at least one score >= 2.5
+  ungroup() %>%  # Remove grouping after filtering
+  arrange(external_gene_name, desc(score))
+
+##### NEXT DF PREPARED FOR GO NEED TO BE MODIFIED FOR THE NEW ENSEMBL SET OF DF
+nM_intronSignal_1GO <- M_intronSignal_good_Iwidth_2_prom %>%
+  # Identify genes that pass the threshold
+  group_by(genes) %>%
+  filter(any(score >= 1)) %>%  # Keep all rows for genes with at least one score >= 1
+  ungroup() %>%  # Remove grouping after filtering
+  arrange(genes, desc(score)) %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?")) %>%
+  distinct(genes)
+nM_intronSignal_0GO <- M_intronSignal_good_Iwidth_2_prom %>%
+  # Identify genes that pass the threshold
+  group_by(genes) %>%
+  filter(any(score >= 1)) %>%  # Keep all rows for genes with at least one score >= 1
+  ungroup() %>%  # Remove grouping after filtering
+  arrange(genes, desc(score)) %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?")) %>%
+  distinct(genes)
+
+
+
+
+
+library(ggplot2)
+library(dplyr)
+
+# Prepare data: Ensure `nM_2` values are unique per gene
+nM_intronSignal_lowProm_unique_ensembl <- nM_intronSignal_lowProm_ensembl %>%
+  distinct(external_gene_name, nM_2)
+nM_intronSignal_highProm_unique_ensembl <- nM_intronSignal_highProm_ensembl %>%
+  distinct(external_gene_name, nM_2)
+nM_highintronSignal_Prom_unique_ensembl <- nM_highintronSignal_Prom_ensembl %>%
+  distinct(external_gene_name, nM_2)
+
+
+# Sort genes by the maximum score value
+gene_order <- nM_intronSignal_lowProm_ensembl %>%
+  group_by(external_gene_name) %>%
+  summarize(max_score = max(score, na.rm = TRUE)) %>%
+  arrange(desc(max_score)) %>%
+  pull(external_gene_name)
+gene_order <- nM_intronSignal_highProm_ensembl %>%
+  group_by(external_gene_name) %>%
+  summarize(max_score = max(score, na.rm = TRUE)) %>%
+  arrange(desc(max_score)) %>%
+  pull(external_gene_name)
+gene_order <- nM_highintronSignal_Prom_ensembl %>%
+  group_by(external_gene_name) %>%
+  summarize(max_score = max(score, na.rm = TRUE)) %>%
+  arrange(desc(max_score)) %>%
+  pull(external_gene_name)
+
+# Plot
+barplotL = ggplot() +
+  # Add bars for nM_2 values
+  geom_bar(
+    data = nM_intronSignal_lowProm_unique,
+    aes(x = factor(genes, levels = gene_order), y = nM_2),  # Sort genes by `gene_order`
+    stat = "identity",  # Use nM_2 values directly
+    fill = "skyblue",
+    alpha = 0.7
+  ) +
+  # Overlay points for score values
+  geom_point(
+    data = nM_intronSignal_lowProm,
+    aes(x = factor(genes, levels = gene_order), y = score, color = score),
+    position = position_jitter(width = 0.2),  # Jitter points for better visibility
+    alpha = 0.8,
+    size = 1.5  # Reduce dot size
+  ) +
+  # Log10 scale for y-axis
+  #scale_y_log10() +
+  labs(
+    title = "Intron signal of nM low expressed genes",
+    x = "Genes",
+    y = "TPM",
+    fill = "nM_2",
+    color = "Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, size = 6, hjust = 1),  # Rotate x-axis labels for better readability
+    panel.grid.minor = element_blank()  # Remove minor grid lines for clarity
+  )
+
+barplotL_ensembl = ggplot() +
+  # Add bars for nM_2 values
+  geom_bar(
+    data = nM_intronSignal_lowProm_unique_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = nM_2),  # Sort genes by `gene_order`
+    stat = "identity",  # Use nM_2 values directly
+    fill = "skyblue",
+    alpha = 0.7
+  ) +
+  # Overlay points for score values
+  geom_point(
+    data = nM_intronSignal_lowProm_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = score, color = score),
+    position = position_jitter(width = 0.2),  # Jitter points for better visibility
+    alpha = 0.8,
+    size = 1.5  # Reduce dot size
+  ) +
+  # Log10 scale for y-axis
+  #scale_y_log10() +
+  labs(
+    title = "Intron signal of nM low expressed genes ENSEMBL",
+    x = "Genes",
+    y = "TPM",
+    fill = "nM_2",
+    color = "Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, size = 6, hjust = 1),  # Rotate x-axis labels for better readability
+    panel.grid.minor = element_blank()  # Remove minor grid lines for clarity
+  )
+
+
+barplotH = ggplot() +
+  # Add bars for nM_2 values
+  geom_bar(
+    data = nM_intronSignal_highProm_unique_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = nM_2),  # Sort genes by `gene_order`
+    stat = "identity",  # Use nM_2 values directly
+    fill = "skyblue",
+    alpha = 0.7
+  ) +
+  # Overlay points for score values
+  geom_point(
+    data = nM_intronSignal_highProm_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = score, color = score),
+    position = position_jitter(width = 0.2),  # Jitter points for better visibility
+    alpha = 0.8,
+    size = 1.5  # Reduce dot size
+  ) +
+  # Log10 scale for y-axis
+  scale_y_log10(limits = c(1e-01, 2e+04)) +
+  labs(
+    title = "Intron signal of nM high expressed genes ENSEMBL",
+    x = "Genes",
+    y = "TPM",
+    fill = "nM_2",
+    color = "Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, size = 6, hjust = 1),  # Rotate x-axis labels for better readability
+    panel.grid.minor = element_blank()  # Remove minor grid lines for clarity
+  )
+
+barplotI = ggplot() +
+  # Add bars for nM_2 values
+  geom_bar(
+    data = nM_highintronSignal_Prom_unique_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = nM_2),  # Sort genes by `gene_order`
+    stat = "identity",  # Use nM_2 values directly
+    fill = "skyblue",
+    alpha = 0.7
+  ) +
+  # Overlay points for score values
+  geom_point(
+    data = nM_highintronSignal_Prom_ensembl,
+    aes(x = factor(external_gene_name, levels = gene_order), y = score, color = score),
+    position = position_jitter(width = 0.2),  # Jitter points for better visibility
+    alpha = 0.8,
+    size = 1.5  # Reduce dot size
+  ) +
+  # Log10 scale for y-axis
+  scale_y_log10(limits = c(1e-01, 2e+04)) +
+  labs(
+    title = "Expression of genes with high intronic signal ENSEMBL",
+    x = "Genes",
+    y = "TPM",
+    fill = "nM_2",
+    color = "Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, size = 8, hjust = 1),  # Rotate x-axis labels for better readability
+    panel.grid.minor = element_blank()  # Remove minor grid lines for clarity
+  )
+
+
+
+```
+
+## FIMO
+
+FIRST try. Use as background 9100 random introns
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(Biostrings)
+install.packages("FNN")
+library(FNN)
+
+### FIMO ON JANUARY. Export region ±100bp from intron signal
+tM_intronSignal_good_unique
+
+
+intrGR_meme2 = GRanges(seqnames = tM_intronSignal_good_unique$seqnames,
+                      ranges = IRanges(start = tM_intronSignal_good_unique$pos - 100,
+                                       end = tM_intronSignal_good_unique$pos + 100),
+                      strand = tM_intronSignal_good_unique$strand,
+                      genes = tM_intronSignal_good_unique$genes,
+                      ensembl_gene_id = tM_intronSignal_good_unique$ensembl_gene_id)
+intrGR_meme2 = sort(intrGR_meme2) # sort by coordinate (ranges)
+# get sequences from intron granges
+intron_fasta_meme2 = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_meme2)
+
+### BACKGROUND
+# For the background I will take into account the expression and intron length distribution of the set of introns with signal to extract random sequencies from introns with similar characteristics. I will select the nearest neighbor matching
+M_intronSignal_prom_ensembl
+consclust_df_lowTPM_ensembl_samples_oneprom
+allintrons_tsl1
+# clean df to have no repetitions on intronID per gene
+allintrons_tsl1_cleaned <- allintrons_tsl1 %>%
+  dplyr::select(-transcriptId) %>%  # Remove transcriptId column
+  distinct(ensembl_gene_id, intronID, .keep_all = TRUE)  # Keep only unique intronID per gene
+
+# get promoter score of all introns tsl1 and filter out NA for tM. I decided to filter out NAs because there are too many (corresponding to not expressed genes) and if I keep these, the set of background introns retrieved by downstream analysis was very enriched in not expressed genes. To avoid this enrichment I removed NAs
+tsl1_intron_prom_ensembl = allintrons_tsl1 %>%
+  distinct(intronID, .keep_all = T) %>%
+  left_join(
+    consclust_df_lowTPM_ensembl_samples_oneprom %>%
+      dplyr::select(geneId, nM_2, tM), 
+    by = c("ensembl_gene_id" = "geneId")
+  ) %>%
+  filter(!is.na(tM)) %>%
+  mutate(tM = if_else(tM == 0, 1e-3, tM))
+
+
+# add pseudozero because many of them are genes not expressed in any cell phase, so I have NA value
+#tsl1_intron_prom_ensembl = tsl1_intron_prom_ensembl %>%
+  # mutate(
+  #   NA_expression = if_else(is.na(tM) | is.na(nM_2), T, F),
+  #   tM = if_else(is.na(tM), 1e-3, tM),
+  #   nM_2 = if_else(is.na(nM_2), 1e-3, nM_2)
+  # )
+# filter out introns with signal from tsl1 introns df
+tsl1_intron_noS_prom_ensembl= tsl1_intron_prom_ensembl %>% filter(!(intronID %in% M_intronSignal_prom_ensembl$intronID))
+#there are repeated intronID per gene. I filter it
+#tsl1_intron_noS_prom_ensembl_u = tsl1_intron_noS_prom_ensembl %>% distinct(ensembl_gene_id, intronID, .keep_all = TRUE)
+
+
+# add intron width column to df containing intron signal
+M_intronSignal_prom_ensembl = M_intronSignal_prom_ensembl %>% mutate(intron_width = end_intron -start_intron)
+
+
+
+
+#I did loop to prevent having duplicates on the background df. The loop removes selected rows to avoid repetitions
+#Create a copy of the dataset that will be reduced as rows are selected
+available_data <- tsl1_intron_noS_prom_ensembl
+# Initialize vector to store unique matches
+matched_indices <- c()
+neighbor_background <- data.frame()
+bigbackgr = data.frame()
+# Loop through each query point and select the nearest available row
+for (i in 1:nrow(M_intronSignal_prom_ensembl)) {
+#  if (nrow(available_data) == 0) break  # Stop if all rows are used
+
+  # Get the nearest neighbor
+  nn_result <- get.knnx(data = available_data[, c("tM", "width")],
+                        query = M_intronSignal_prom_ensembl[i, c("tM", "intron_width")],
+                        k = 5) # I think here you put a 1 if you want one output per input, or 5 if you want 5 output per input
+  # Extract the matched index
+  chosen_idx <- nn_result$nn.index[1, 1:5]
+
+  # Store the chosen index
+  bigbackgr <- rbind(bigbackgr, available_data[chosen_idx,])
+  
+  # Remove the chosen row from the available dataset
+  available_data <- available_data[-chosen_idx, ]
+} # neighbor_background stores random introns with similar width and score distribution to introns with signal df
+
+
+ # nn_result <- get.knnx(data = available_data[, c("tM", "width")],
+ #                        query = M_intronSignal_prom_ensembl[i, c("tM", "intron_width")],
+ #                        k = 5)
+
+
+#To check that distribution between input (M_intronSignal_prom_ensembl) and background (neighbor_background) are similar in width and tM
+ggplot() +
+     geom_histogram(data = M_intronSignal_prom_ensembl,
+                    aes(x = intron_width), bins = 100) +
+     scale_x_log10()
+
+
+tsl1_intron_prom_ensembl
+# get GRanges from background to extract fasta
+backgrGR_fimo = GRanges(seqnames = neighbor_background$seqnames,
+                      ranges = IRanges(start = neighbor_background$start - 100,
+                                       end = neighbor_background$start + 100),
+                      strand = neighbor_background$strand,
+                      external_gene_name = neighbor_background$external_gene_name)
+# get sequences from random intron granges
+backgr_fasta_fimo = getSeq(BSgenome.Hsapiens.UCSC.hg38, backgrGR_fimo)
+# add identifier
+names(backgr_fasta_fimo) <- paste0("seq", seq_along(backgr_fasta_fimo))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(backgr_fasta_fimo, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/100bp_fromIntronS/control_for_fimo.fasta")
+
+# get GRanges from background to extract fasta
+bigbackgrGR_fimo = GRanges(seqnames = tsl1_intron_prom_ensembl$seqnames,
+                      ranges = IRanges(start = tsl1_intron_prom_ensembl$start - 100,
+                                       end = tsl1_intron_prom_ensembl$start + 100),
+                      strand = tsl1_intron_prom_ensembl$strand,
+                      external_gene_name = tsl1_intron_prom_ensembl$external_gene_name)
+# get sequences from random intron granges
+bigbackgrGR_fimo = getSeq(BSgenome.Hsapiens.UCSC.hg38, bigbackgrGR_fimo)
+# add identifier
+names(bigbackgrGR_fimo) <- paste0("seq", seq_along(bigbackgrGR_fimo))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(bigbackgrGR_fimo, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/100bp_fromIntronS/allIntrBackgr_for_fimo.fasta")
+
+
+
+
+
+##### COMPARING FIMO CONTROL (RANDOM INTRONS WO SIGNAL WITH SIMILAR TPM AND WIDTH DISTRIBUTION) AND INPUT (INTRONS WITH SIGNAL)
+
+fimo_control <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/100bp_fromIntronS/fimo_control/fimo.tsv", header = TRUE, sep = "\t")
+# Filter by q-value and sum the number of occurenced for each motif ID
+fimo_control_fi = fimo_control[1:284024,] %>% filter(q.value <= 0.1) # I remove the last 3 rows corresponding to command line and other info
+
+
+
+
+ATtRACT_distinct = ATtRACT %>%
+  distinct(Matrix_id,.keep_all = T)
+ATtRACT_human = ATtRACT %>%
+  filter(Organism == "Homo_sapiens") %>%
+  dplyr::select(Matrix_id) %>%
+  distinct()
+write.table(ATtRACT_human, file = "~/Desktop/cellcycle/ATtRACT_human.txt", quote = F, col.names = T, row.names = F)
+
+
+fimo_control_fil <- fimo_control_fi %>%
+  left_join(ATtRACT_distinct %>% dplyr::select("Matrix_id", "Organism"), by = c("motif_id" = "Matrix_id")) %>%
+  filter(Organism == "Homo_sapiens") %>%
+  group_by(motif_id) %>%                                   # Group by motif_id
+  mutate(motif_repetition = n()) %>%                              # Count occurrences of each motif_id
+  dplyr::select(motif_id, sequence_name, start, stop, strand, score, p.value, q.value, matched_sequence, motif_repetition) %>% # Select desired columns
+  ungroup() %>%
+  mutate(sequence_name = as.factor(sequence_name)) 
+sum_control = fimo_control_fil %>%
+  distinct(motif_id, .keep_all = T) %>%
+  pull(motif_repetition) %>%
+  sum()
+fimo_control_fil = fimo_control_fil %>%
+  mutate(prob_control = motif_repetition / sum_control)
+
+fimo_control_uniqueM = fimo_control_fil %>%
+  distinct(motif_id, .keep_all = T)
+
+fimo_control_uniqueM_AT <- fimo_control_uniqueM %>%
+  left_join(ATtRACT, by = c("motif_id" = "Matrix_id"), relationship = "many-to-many") %>%
+  distinct(motif_id, .keep_all = T)
+
+
+fimo_intronS <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/100bp_fromIntronS/fimo_interes/fimo.tsv", header = TRUE, sep = "\t")
+# Filter by q-value and sum the number of occurenced for each motif ID
+fimo_intronS_fil = fimo_intronS[1:269616,] %>% filter(q.value <= 0.1) # I remove the last 3 rows corresponding to command line and other info
+fimo_intronS_fil <- fimo_intronS_fil %>%
+  left_join(ATtRACT_distinct %>% dplyr::select("Matrix_id", "Organism"), by = c("motif_id" = "Matrix_id")) %>%
+  filter(Organism == "Homo_sapiens") %>%
+  group_by(motif_id) %>%                                   # Group by motif_id
+  mutate(motif_repetition = n()) %>%                              # Count occurrences of each motif_id
+  dplyr::select(motif_id, sequence_name, start, stop, strand, score, p.value, q.value, matched_sequence, motif_repetition) %>% # Select desired columns
+  ungroup() %>%
+  mutate(sequence_name = as.factor(sequence_name)) 
+sum_intron = fimo_intronS_fil %>%
+  distinct(motif_id, .keep_all = T) %>%
+  pull(motif_repetition) %>%
+  sum()
+fimo_intronS_fil = fimo_intronS_fil %>%
+  mutate(prob_intronS = motif_repetition / sum_intron)
+
+fimo_intronS_uniqueM = fimo_intronS_fil %>%
+  distinct(motif_id, .keep_all = T)
+
+fimo_intronS_uniqueM_AT <- fimo_intronS_uniqueM %>%
+  left_join(ATtRACT, by = c("motif_id" = "Matrix_id"), relationship = "many-to-many") %>%
+  distinct(motif_id, .keep_all = T)
+
+
+fimo_enrichment <- fimo_intronS_uniqueM_AT %>%
+  left_join(fimo_control_uniqueM_AT %>% dplyr::select(motif_id, motif_repetition, prob_control), by = "motif_id") %>%
+  dplyr::select(motif_id, sequence_name, start, stop, strand, score, p.value, q.value, motif_repetition.x, prob_intronS, Gene_name, Gene_id, motif_repetition.y, prob_control) %>%
+  mutate(prob_control = ifelse(is.na(prob_control), 1e-10, prob_control)) %>%
+  mutate(enrichment = prob_intronS / prob_control) %>%
+  arrange(desc(prob_intronS)) %>%
+  mutate(Gene_name = as.factor(Gene_name))
+
+  
+  # Full join and replace NAs with 0
+motif_scatter <- full_join(fimo_intronS_uniqueM_AT %>% dplyr::select(motif_id, motif_repetition), fimo_control_uniqueM_AT %>% dplyr::select(motif_id, motif_repetition), by = "motif_id") %>%
+  mutate(across(starts_with("motif_repetition"), ~replace_na(.x, 0))) %>%
+  mutate(motif_repetition.x = ifelse(motif_repetition.x == 0, 0.1, motif_repetition.x)) %>%
+  mutate(motif_repetition.y = ifelse(motif_repetition.y == 0, 0.1, motif_repetition.y)) %>%
+  mutate(signal_repetition = motif_repetition.x) %>%
+  mutate(control_repetition = motif_repetition.y) %>%
+  dplyr::select(-motif_repetition.x, -motif_repetition.y) %>%
+  mutate(signal_norm = signal_repetition/sum_S) %>%
+  mutate(control_norm = control_repetition/sum_C)
+
+ggplot(motif_scatter, aes(x = control_repetition, y = signal_repetition)) +
+  geom_point() +
+  labs(x = "Motif repetition (Signal)", y = "Motif repetition (control)") +
+  theme_minimal()
+
+sum_S = sum(motif_scatter$signal_repetition)
+sum_C = sum(motif_scatter$control_repetition)
+
+
+library(ggrepel)
+ggplot(motif_scatter, aes(x = control_repetition, y = signal_repetition, label = motif_id)) +
+  geom_point() +
+  geom_text_repel(size = 3, box.padding = 0.5, point.padding = 0.3, max.overlaps = Inf) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = "Motif repetition (Control) (log10)", y = "Motif repetition (Signal) (log10)", title = "Motifs occurrences (raw counts)") +
+  theme_minimal()
+
+ggplot(motif_scatter, aes(x = control_norm, y = signal_norm, label = motif_id)) +
+  geom_point() +
+  geom_text_repel(size = 3, box.padding = 0.5, point.padding = 0.3, max.overlaps = Inf) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = "Motif repetition (Control) (log10)", y = "Motif repetition (Signal) (log10)", title = "Motifs occurrences (normalised counts)") +
+  theme_minimal()
+
+
+  
+
+library(forcats)
+fimo_enrichment_b = fimo_enrichment %>%
+  bind_rows(
+  fimo_control_uniqueM_AT %>%
+    anti_join(fimo_enrichment, by = "motif_id")  # Only rows with motif_id not in fimo_enrichment
+  ) %>%
+  dplyr::select(1:15) %>%
+  mutate(prob_intronS = ifelse(is.na(prob_intronS), 1e-10, prob_intronS)) %>%
+  mutate(enrichment = prob_intronS / prob_control) %>%
+  arrange(desc(prob_intronS)) %>%
+  mutate(Gene_name = fct_reorder(Gene_name, desc(prob_intronS)))  # Reorder Gene_name by prob_intronS
+  
+fimo_prob <- fimo_enrichment_b %>%
+  group_by(Gene_name) %>%  # Group by Gene_name
+  summarise(
+    sumprob_intronS = sum(prob_intronS, na.rm = TRUE),  # Sum prob_intronS
+    sumprob_control = sum(prob_control, na.rm = TRUE),  # Sum prob_control
+    .groups = "drop"  # Ungroup after summarizing
+  ) %>%
+  arrange(desc(sumprob_intronS))
+
+gene_order = fimo_prob %>%
+  pull(Gene_name)
+
+# Convert data to long format for ggplot
+df_long <- fimo_prob %>%
+  pivot_longer(cols = c(sumprob_intronS, sumprob_control), 
+               names_to = "Probability_Type", 
+               values_to = "Probability_Value")
+# Create the bar plot
+ggplot(df_long, aes(x = factor(Gene_name, levels = gene_order), y = Probability_Value, fill = Probability_Type)) +
+  geom_bar(stat = "identity", position = "dodge") +  # "dodge" places bars side by side
+  labs(x = "RBP_motif_id", y = "Probability", fill = "Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 6, angle = 45, hjust = 1))
+
+
+
+
+#### Expression of RBP associated to enriched motifs
+consclust_df_lowTPM_ensembl_samples_oneprom
+# tsl1_intron_prom_ensembl
+# expr = tsl1_intron_prom_ensembl %>%
+#   distinct(ensembl_gene_id, .keep_all = T)
+fimo_enrichment_b_ex = fimo_enrichment_b %>%
+  left_join(consclust_df_lowTPM_ensembl_samples_oneprom %>% dplyr::select(geneId, tM), by = c("Gene_id" = "geneId"))
+fimo_plot_expr = fimo_enrichment_b_ex %>%
+  distinct(Gene_id, .keep_all = T) %>%
+  arrange(desc(tM))
+
+
+gene_order <- fimo_plot_expr %>%
+  pull(Gene_name)
+
+ggplot() +
+  geom_bar(
+    data = fimo_plot_expr,
+    aes(x = factor(Gene_name, levels = gene_order), y = tM),
+    stat = "identity",
+    fill = "skyblue",
+    width = 0.7
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1)) +
+  labs(x = "Expression of RBP", y = "tM TPM") #+
+  scale_y_log10()
+
+
+
+barplotL = ggplot() +
+  # Add bars for nM_2 values
+  geom_bar(
+    data = nM_intronSignal_lowProm_unique,
+    aes(x = factor(genes, levels = gene_order), y = nM_2),  # Sort genes by `gene_order`
+    stat = "identity",  # Use nM_2 values directly
+    fill = "skyblue",
+    alpha = 0.7
+  )
+# fimo_enrichment_plot = fimo_enrichment %>%
+#   dplyr::select(motif_id, motif_repetition.x, prob_intronS, Gene_name, Gene_id, motif_repetition.y, prob_control) %>%
+#   rbind(fimo_control_uniqueM_AT %>% dplyr::select(motif_id)[which(!fimo_control_uniqueM_AT$motif_id %in% fimo_intronS_uniqueM_AT$motif_id)])
+
+
+
+
+fimo1_fil2 = fimo1_fil_AT %>%
+  group_by(Gene_name) %>%
+  arrange(q.value, desc(motif_repetition))
+
+fimo1_fil_AT_unique <- fimo1_fil_AT %>%
+  group_by(Gene_name) %>%
+  slice(1) %>% # Keep the first occurrence of each Gene_name
+  ungroup() # Remove grouping
+
+
+
+```
+
+## MEME
+
+THIRD TRY. Slava suggestions. Use all introns as background. Use random set of introns as control excluding introns with signal (same number as introns with signal).
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(Biostrings)
+# I skip this step that was design for the first attempt
+# nM_highintronSignal_Prom_fasta = M_intronSignal_good_Iwidth_2_prom %>%
+#   dplyr::filter(score >= 0.5) %>%
+#   arrange(score, genes, desc(score)) %>%
+#   mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+
+intrGR_meme2 = GRanges(seqnames = M_intronSignal_good_Iwidth_2_prom$seqnames,
+                      ranges = IRanges(start = M_intronSignal_good_Iwidth_2_prom$start_intron,
+                                       end = M_intronSignal_good_Iwidth_2_prom$end_intron),
+                      strand = M_intronSignal_good_Iwidth_2_prom$strand,
+                      genes = M_intronSignal_good_Iwidth_2_prom$genes)
+intrGR_meme2 = sort(intrGR_meme2) # sort by coordinate (ranges)
+# get sequences from intron granges
+intron_fasta_meme2 = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_meme2)
+# add identifier
+names(intron_fasta_meme2) <- paste0("seq", seq_along(intron_fasta_meme2))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(intron_fasta_meme2, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/introns_for_meme2_100bp.fasta")
+
+
+
+## Prepare background.
+
+intronID_tsl1
+backgrGR_meme = GRanges(seqnames = intronID_tsl1$seqnames,
+                      ranges = IRanges(start = intronID_tsl1$start,
+                                       end = intronID_tsl1$end),
+                      strand = intronID_tsl1$strand,
+                      external_gene_name = intronID_tsl1$external_gene_name)
+# get sequences from random intron granges
+backgr_fasta_meme = getSeq(BSgenome.Hsapiens.UCSC.hg38, backgrGR_meme)
+# add identifier
+names(backgr_fasta_meme) <- paste0("seq", seq_along(backgr_fasta_meme))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(backgr_fasta_meme, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/backgr_for_meme3.fasta")
+
+## Prepare control fasta. Exclude introns with signal and extract a random set of introns (same number as introns with signal)
+# Find non-identical ranges by excluding exact matches
+control_meme <- backgrGR_meme[!backgrGR_meme %in% intrGR_meme2]
+# Randomly sample 9100 ranges, that is the number of introns with signal
+set.seed(123)  # Set a random seed for reproducibility
+control_meme <- control_meme[sample(length(control_meme), 9100)]
+# get sequences from random intron granges
+control_fasta_meme = getSeq(BSgenome.Hsapiens.UCSC.hg38, control_meme)
+# add identifier
+names(control_fasta_meme) <- paste0("seq", seq_along(control_fasta_meme))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(control_fasta_meme, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/control_for_meme3.fasta")
+
+
+
+
+# Adapt PWM to MEME format
+
+# Read the PWM file
+pwm_data <- readLines("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/pwm.txt")
+
+# Initialize a vector to store the reformatted output
+reformatted_pwm <- c()
+
+# Loop through each line to reformat
+for (line in pwm_data) {
+  # Check if the line starts with ">"
+  if (startsWith(line, ">")) {
+    # Extract the identifier (everything before the tab character)
+    identifier <- sub("\t.*$", "", line)
+    # Add the identifier line to the output
+    reformatted_pwm <- c(reformatted_pwm, identifier)
+  } else {
+    # Otherwise, add the line as-is to the output
+    reformatted_pwm <- c(reformatted_pwm, line)
+  }
+}
+
+# Write the reformatted data to a new file
+writeLines(reformatted_pwm, "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/reformatted_pwm.txt")
+
+
+
+## substract from ATtRACT database of RNA binding proteins motifs the ones retrieved by tomtom
+
+ATtRACT <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/ATtRACT/ATtRACT_db.txt", header = TRUE, sep = "\t")
+
+tomtom3 <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/streme3_20mot/tomtom_output_streme3_20mot/tomtom.tsv", header = TRUE, sep = "\t")
+
+
+# Filter tomtom result and combine with ATtRACT database
+tomtom3_fil = tomtom3 %>%
+  left_join(ATtRACT, by = c("Target_ID" = "Matrix_id"), relationship = "many-to-many") %>%
+  select(everything(), Gene_name) %>%
+  filter(Organism == "Homo_sapiens")
+tomtom3_fil_unique = tomtom3_fil %>%
+  group_by(Gene_name) %>%
+  slice(1) %>%
+  ungroup()
+
+
+
+common_streme3_fimo1 = intersect(tomtom3_fil_unique$Gene_name, fimo1_fil_AT_unique$Gene_name)
+
+```
+
+SECOND TRY. I use sequences of all introns with signal (not only those with tpm\>=0.5 as done on the first test). The first time I also sorted introns by score (from lowest to highest) and this time I will not sort them by score, just by coordinate.
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(Biostrings)
+# I skip this step that was design for the first attempt
+# nM_highintronSignal_Prom_fasta = M_intronSignal_good_Iwidth_2_prom %>%
+#   dplyr::filter(score >= 0.5) %>%
+#   arrange(score, genes, desc(score)) %>%
+#   mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+
+intrGR_meme2 = GRanges(seqnames = M_intronSignal_good_Iwidth_2_prom$seqnames,
+                      ranges = IRanges(start = M_intronSignal_good_Iwidth_2_prom$start_intron,
+                                       end = M_intronSignal_good_Iwidth_2_prom$end_intron),
+                      strand = M_intronSignal_good_Iwidth_2_prom$strand,
+                      genes = M_intronSignal_good_Iwidth_2_prom$genes)
+intrGR_meme2 = sort(intrGR_meme2) # sort by coordinate (ranges)
+# get sequences from intron granges
+intron_fasta_meme2 = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_meme2)
+# add identifier
+names(intron_fasta_meme2) <- paste0("seq", seq_along(intron_fasta_meme2))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(intron_fasta_meme2, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/introns_for_meme2.fasta")
+
+
+
+## Prepare background. I will use a random selection of introns excluding the ones with signal.
+
+intronID_tsl1
+backgrGR_meme = GRanges(seqnames = intronID_tsl1$seqnames,
+                      ranges = IRanges(start = intronID_tsl1$start,
+                                       end = intronID_tsl1$end),
+                      strand = intronID_tsl1$strand,
+                      external_gene_name = intronID_tsl1$external_gene_name)
+# Find non-identical ranges by excluding exact matches
+backgrGR_meme2 <- backgrGR_meme[!backgrGR_meme %in% intrGR_meme2]
+# Randomly sample 9100 ranges, that is the number of introns with signal
+set.seed(123)  # Set a random seed for reproducibility
+backgrGR_meme2 <- backgrGR_meme2[sample(length(backgrGR_meme2), 9100)]
+
+# get sequences from random intron granges
+backgr_fasta_meme2 = getSeq(BSgenome.Hsapiens.UCSC.hg38, backgrGR_meme2)
+# add identifier
+names(backgr_fasta_meme2) <- paste0("seq", seq_along(backgr_fasta_meme2))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(backgr_fasta_meme, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/backgr_for_meme2.fasta")
+
+
+
+
+# Adapt PWM to MEME format
+
+# Read the PWM file
+pwm_data <- readLines("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/pwm.txt")
+
+# Initialize a vector to store the reformatted output
+reformatted_pwm <- c()
+
+# Loop through each line to reformat
+for (line in pwm_data) {
+  # Check if the line starts with ">"
+  if (startsWith(line, ">")) {
+    # Extract the identifier (everything before the tab character)
+    identifier <- sub("\t.*$", "", line)
+    # Add the identifier line to the output
+    reformatted_pwm <- c(reformatted_pwm, identifier)
+  } else {
+    # Otherwise, add the line as-is to the output
+    reformatted_pwm <- c(reformatted_pwm, line)
+  }
+}
+
+# Write the reformatted data to a new file
+writeLines(reformatted_pwm, "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/reformatted_pwm.txt")
+
+
+
+## substract from ATtRACT database of RNA binding proteins motifs the ones retrieved by tomtom
+
+ATtRACT <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/ATtRACT/ATtRACT_db.txt", header = TRUE, sep = "\t")
+# Define the values to filter
+matrix_ids2 <- c("1320", "1325", "819", "878", "930", "974", "175", "1245", "s81")
+matrix_ids_streme = c("1244", "831", "895", "947", "981", "837", "901", "953", "987", "546", "s22", "M351_0.6", "886", "938", "979", "1381", "330", "1245", "s81", "507", "659", "1212", "1373", "1335", "836", "900", "952", "986", "430", "837", "901", "953", "987", "507", "330", "838", "902", "954", "988", "523", "1379", "831", "895", "947", "981", "749", "779", "M043_0.6", "M016_0.6", "1002", "1146", "M020_0.6", "M109_0.6", "1314", "M151_0.6", "50", "1017", "1035", "1037", "1042", "1055", "1059", "1060", "1068", "1072", "1073", "1128", "1149", "1236", "2", "57", "595", "604", "606", "608", "610", "722", "727", "762", "764", "770", "790", "796", "821", "822", "883", "884", "935", "936", "976", "977", "s96", "1016", "1026", "1034", "1036", "1040", "1041", "1043", "1044", "1045", "1071", "1107", "1127", "1150", "684", "763", "769", "773", "774", "776", "791", "795", "797", "561", "829", "854", "893", "908", "945", "959", "990", "477", "329", "572", "M106_0.6", "M118_0.6", "1333", "M093_0.6", "748", "778", "446", "M188_0.6", "888", "940", "1320", "1325", "819", "878", "930", "974", "828", "892", "944", "989", "879", "931", "430")
+
+
+
+# Filter rows from ATtRACT
+ATtRACT_filtered3 <- ATtRACT %>%
+  filter(Matrix_id %in% matrix_ids_streme) %>%
+  distinct()
+
+ATtRACT_filtered3_unique <- ATtRACT_filtered3 %>%
+  filter(Organism == "Homo_sapiens") %>% # Filter for Homo sapiens
+  distinct(Gene_name, .keep_all = TRUE)  # Keep only one row per Gene_name
+
+
+```
+
+FIRST TRY
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(Biostrings)
+
+nM_highintronSignal_Prom_fasta = M_intronSignal_good_Iwidth_2_prom %>%
+  dplyr::filter(score >= 0.5) %>%
+  arrange(score, genes, desc(score)) %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+
+intrGR_meme = GRanges(seqnames = nM_highintronSignal_Prom_fasta$seqnames,
+                      ranges = IRanges(start = nM_highintronSignal_Prom_fasta$start_intron,
+                                       end = nM_highintronSignal_Prom_fasta$end_intron),
+                      strand = nM_highintronSignal_Prom_fasta$strand,
+                      genes = nM_highintronSignal_Prom_fasta$genes)
+
+# get sequences from intron granges
+intron_fasta_meme = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_meme)
+# add identifier
+names(intron_fasta_meme) <- paste0("seq", seq_along(intron_fasta_meme))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(intron_fasta_meme, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/introns_for_meme.fasta")
+
+
+
+## Prepare background. I will use a random selection of introns excluding the ones with signal.
+
+intronID_tsl1
+backgrGR_meme = GRanges(seqnames = intronID_tsl1$seqnames,
+                      ranges = IRanges(start = intronID_tsl1$start,
+                                       end = intronID_tsl1$end),
+                      strand = intronID_tsl1$strand,
+                      external_gene_name = intronID_tsl1$external_gene_name)
+# Find non-identical ranges by excluding exact matches
+backgrGR_meme <- backgrGR_meme[!backgrGR_meme %in% intrGR_meme]
+# Randomly sample 1649 ranges
+set.seed(123)  # Set a random seed for reproducibility
+backgrGR_meme <- backgrGR_meme[sample(length(backgrGR_meme), 1649)]
+
+# get sequences from random intron granges
+backgr_fasta_meme = getSeq(BSgenome.Hsapiens.UCSC.hg38, backgrGR_meme)
+# add identifier
+names(backgr_fasta_meme) <- paste0("seq", seq_along(backgr_fasta_meme))
+# Save the DNAStringSet object to a FASTA file
+writeXStringSet(backgr_fasta_meme, filepath = "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/backgr_for_meme.fasta")
+
+
+
+
+# Adapt PWM to MEME format
+# Input and output file paths
+input_file <- "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/pwm.txt"
+output_file <- "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/pwm_fixed.txt"
+
+# Read the input file
+lines <- readLines(input_file)
+
+# Initialize an empty vector for the reformatted content
+output_lines <- c()
+
+# Process each line
+# for (line in lines) {
+#   line <- trimws(line)  # Remove leading/trailing spaces
+#   if (startsWith(line, ">")) {
+#     # For motif headers, keep only the first part of the identifier
+#     motif_name <- unlist(strsplit(line, "\\s+"))[1]
+#     output_lines <- c(output_lines, motif_name)  # Add header
+#   } else {
+#     # For PWM rows, add nucleotide labels
+#     values <- unlist(strsplit(line, "\\s+"))
+#     output_lines <- c(output_lines,
+#                       paste("A", values[1], 
+#                             "C", values[2], 
+#                             "G", values[3], 
+#                             "T", values[4]))
+#   }
+# }
+
+for (line in lines) {
+  line <- trimws(line)  # Remove leading/trailing spaces
+  if (startsWith(line, ">")) {
+    # For motif headers, keep only the first part of the identifier
+    motif_name <- unlist(strsplit(line, "\\s+"))[1]
+    output_lines <- c(output_lines, motif_name)  # Add header
+  } else {
+    # For PWM rows, add nucleotide labels
+    values <- unlist(strsplit(line, "\\s+"))
+    output_lines <- c(output_lines,
+                      paste(values[1], 
+                            values[2], 
+                            values[3], 
+                            values[4]))
+  }
+}
+
+# Write the reformatted lines to the output file
+writeLines(output_lines, output_file)
+
+cat("Reformatted PWM saved to:", output_file, "\n")
+
+
+
+
+
+
+# Read the PWM file
+pwm_data <- readLines("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/pwm.txt")
+
+# Initialize a vector to store the reformatted output
+reformatted_pwm <- c()
+
+# Loop through each line to reformat
+for (line in pwm_data) {
+  # Check if the line starts with ">"
+  if (startsWith(line, ">")) {
+    # Extract the identifier (everything before the tab character)
+    identifier <- sub("\t.*$", "", line)
+    # Add the identifier line to the output
+    reformatted_pwm <- c(reformatted_pwm, identifier)
+  } else {
+    # Otherwise, add the line as-is to the output
+    reformatted_pwm <- c(reformatted_pwm, line)
+  }
+}
+
+# Write the reformatted data to a new file
+writeLines(reformatted_pwm, "~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/reformatted_pwm.txt")
+
+
+
+
+ATtRACT <- read.delim("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/introns/meme/ATtRACT/ATtRACT_db.txt", header = TRUE, sep = "\t")
+# Define the values to filter
+matrix_ids <- c("1320", "1325", "819", "878", "930", "974", "175", "1245", "s81", "1381")
+
+# Filter rows from ATtRACT
+ATtRACT_filtered <- ATtRACT %>%
+  filter(Matrix_id %in% matrix_ids) %>%
+  distinct()
+
+
+
+```
+
+## Metaplot introns
+
+```{r}
+
+dftogr=neighbor_background %>%
+  mutate(coordinate_start = ifelse(strand == "+", start, end),
+         coordinate_end = ifelse(strand == "+", end, start))
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+
+GR_metaplot = GRanges(seqnames = dftogr$seqnames,
+                      ranges = IRanges(start = dftogr$coordinate_start,
+                                       end = dftogr$coordinate_start),
+                      strand = dftogr$strand,
+                      score = dftogr$score,
+                      seqlengths = seqlengths(txdb))
+
+
+consClustGR_tmp = GR_metaplot
+Slidingwindow<-2 # you can define different size of window but it has to be dividible by 2 (next step)
+coords <-c(-25, 25) # you always have to divide the slidingwindow/2
+windows<-promoters(consClustGR_tmp, -coords[1], coords[2])
+seq <- getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+sample_number<-length(seq)
+pattern_list<-c("GC","CG","TA","AT", "AG", "GT", "GTG", "GTA")
+motif_par<-pattern_list[1]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+X<-colSums(pattern@image)
+motif_par<-pattern_list[2]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Y<-colSums(pattern@image)
+motif_par<-pattern_list[3]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Z<-colSums(pattern@image)
+motif_par<-pattern_list[4]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+N<-colSums(pattern@image)
+motif_par<-pattern_list[5]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+O<-colSums(pattern@image)
+motif_par<-pattern_list[6]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+P<-colSums(pattern@image)
+motif_par<-pattern_list[7]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Q<-colSums(pattern@image)
+motif_par<-pattern_list[8]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+R<-colSums(pattern@image)
+X_sum<-data.frame(position=c(coords[1]:-1,1:coords[2]),
+                  "GC"=X,
+                  "CG"=Y, #SP
+                  "TA"=Z, # SP
+                  "AT"=N,
+                  "AG"=O,
+                  "GT"=P,
+                  "GTG"=Q,
+                  "GTA"=R)
+X_sum
+slided_hits<-data.frame(position=c((coords[1]+Slidingwindow/2):-1,1:(coords[2]-Slidingwindow/2)),
+                        "GC"=NA,"CG"=NA,"TA"=NA,"AT"=NA, "AG"=NA, "GT"=NA, "GTG"=NA, "GTA"=NA)
+slide_tmp<-matrix(NA, nrow = (coords[2]*2-Slidingwindow),ncol=Slidingwindow+1)
+for (l in pattern_list) {
+  motif<-l
+  for (i in 1:(Slidingwindow+1)) {
+    range<-c(i:(nrow(X_sum)-Slidingwindow+i-1))
+    slide_tmp[,i]<-X_sum[range,motif]
+  }
+  slided_hits[,motif]<-rowSums(slide_tmp)/(Slidingwindow+1)
+}
+library(reshape)
+library(reshape2)
+slided_hits<-melt(slided_hits,id.vars = "position")
+slided_hits$type<-slided_hits$variable
+slided_hits$value<-slided_hits$value/nrow(as.data.frame(consClustGR_tmp)) #divided by nrow to normalise??
+
+metaplot_temp = ggplot(slided_hits
+,aes(x=position,
+     y=value,
+     color=variable))+
+  labs(title=paste0("Relative frequency of motif | Start of introns without signal |
+                    "," | N=",sample_number))+
+  xlab("Relative position")+
+  ylab("Relative frequency")+
+  #facet_wrap(.~type)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_vline(xintercept=c(0),lty=2,col="black",lwd=1)+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme_classic(base_size = 16)+
+  scale_colour_manual(values = c("orange1","red1", "blue3","cyan3","black","green2","purple","yellow","grey","royalblue2")) +
+  geom_point(aes(x = position, y = value, colour = variable)) +
+  scale_y_continuous(limits = c(0, 0.40), breaks = seq(0, 0.400, by = 0.025)) +
+  #geom_smooth(stat="smooth")
+  geom_line(data = slided_hits, aes(x = position, y = value))
+
+ggsave(filename = paste0("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/metaplot/fraction/Frac1_dinuc_metaplot.png"),height = 8,width = 8)
+print(metaplot_temp)
+
+
+```
+
+## LOGO
+
+```{r}
+# I select the same set of introns with signal and without signal (similar distribution of intron width and promoter signal) to the one used for binding motif enrichment
+library(ggseqlogo)
+tM_intronSignal_good_unique
+
+
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+
+
+
+# LOGO start of introns. With and without signal
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+intrGR_logo = GRanges(seqnames = dftogr$seqnames,
+                      ranges = IRanges(start = dftogr$coordinate_start -10,
+                                       end = dftogr$coordinate_start +10),
+                      strand = dftogr$strand,
+                      genes = dftogr$genes,
+                      ensembl_gene_id = dftogr$ensembl_gene_id)
+seq_intr_logo = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_logo)
+seq_intrLogo_strings =as.character(seq_intr_logo)
+TSSlogo_intronS = ggseqlogo(seq_intrLogo_strings, method = "bits") +
+  theme_minimal() +
+  labs(x_axis = "start of introns at position 11", title = "Start of introns with signal LOGO")
+
+
+dftogr2=neighbor_background %>%
+  mutate(coordinate_start = ifelse(strand == "+", start, end),
+         coordinate_end = ifelse(strand == "+", end, start))
+controlGR_logo = GRanges(seqnames = dftogr2$seqnames,
+                      ranges = IRanges(start = dftogr2$coordinate_start - 10,
+                                       end = dftogr2$coordinate_start + 10),
+                      strand = dftogr2$strand,
+                      external_gene_name = dftogr2$external_gene_name)
+seq_control_logo = getSeq(BSgenome.Hsapiens.UCSC.hg38, controlGR_logo)
+seq_controlLogo_strings =as.character(seq_control_logo)
+TSSlogo_control = ggseqlogo(seq_controlLogo_strings, method = "bits") + theme_minimal() +
+  labs(title = "Start of introns without signal LOGO")
+
+
+
+# LOGO end of introns. With and without signal
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+intrGR_logo_end = GRanges(seqnames = dftogr$seqnames,
+                      ranges = IRanges(start = dftogr$coordinate_end -40,
+                                       end = dftogr$coordinate_end -10),
+                      strand = dftogr$strand,
+                      genes = dftogr$genes,
+                      ensembl_gene_id = dftogr$ensembl_gene_id)
+seq_intr_logo_end = getSeq(BSgenome.Hsapiens.UCSC.hg38, intrGR_logo_end)
+seq_intrLogo_strings_end =as.character(seq_intr_logo_end)
+TSSlogo_intronS_end = ggseqlogo(seq_intrLogo_strings_end, method = "bits") +
+  theme_minimal() +
+  labs(title = "Branch point of introns with signal LOGO (-40 to -10 from start of introns)")
+
+
+dftogr2=neighbor_background %>%
+  mutate(coordinate_start = ifelse(strand == "+", start, end),
+         coordinate_end = ifelse(strand == "+", end, start))
+controlGR_logo_end = GRanges(seqnames = dftogr2$seqnames,
+                      ranges = IRanges(start = dftogr2$coordinate_end - 40,
+                                       end = dftogr2$coordinate_end - 10),
+                      strand = dftogr2$strand,
+                      external_gene_name = dftogr2$external_gene_name)
+seq_control_logo_end = getSeq(BSgenome.Hsapiens.UCSC.hg38, controlGR_logo_end)
+seq_controlLogo_strings_end =as.character(seq_control_logo_end)
+TSSlogo_control_end = ggseqlogo(seq_controlLogo_strings_end, method = "bits") + theme_minimal() +
+  labs(title = "Branch point of introns without signal LOGO (-40 to -10 bp from start of introns)")
+
+
+
+```
+
+## Mphase expression
+
+```{r}
+
+tM_intronSignal_good_Iwidth
+intronsignal_conscluster_SOM5_prom
+
+
+TPM_conscluster = consensusClustersTpm(cons_cluster)
+consclusterGR_tpm_nucSOM = nuclearSOM_consclusterGR_df %>% cbind(TPM_conscluster)
+
+consclusterGR_tpm_nucSOM_nM1tpm = consclusterGR_tpm_nucSOM[consclusterGR_tpm_nucSOM$nM_2 >= 1,]
+
+nMexpressed_noIntronS = consclusterGR_tpm_nucSOM_nM1tpm %>%
+  filter(!(genes %in% tM_intronSignal_good_Iwidth$genes)) %>%
+  filter(annotation == "promoter")
+
+
+nMexpressed_noIntronS$median_16_to_25 <- apply(nMexpressed_noIntronS[, 16:25], 1, median, na.rm = TRUE)
+# Filter the consclust with highest median
+nMexpressed_noIntronS_GR_tpm <- nMexpressed_noIntronS %>%
+  group_by(genes) %>%
+  slice_max(median_16_to_25, with_ties = FALSE) %>% #with_ties=F ensures only one row if kept per group
+  ungroup()
+
+
+
+nMexpressed_noIntronS_prom = nMexpressed_noIntronS_GR_tpm %>% select(18:22)
+
+
+# transform the dataframe into a two columns dataframe (stage and TPM)
+TPM_long_all <- nMexpressed_noIntronS_prom %>%
+  pivot_longer(cols = everything(),   # Convert all columns to long format
+               names_to = "Stage",     # New column for gene names (column headers)
+               values_to = "TPM") %>%    # New column for TPM values
+  filter(is.finite(TPM) & TPM > 0)
+# Set the order of the 'Gene' factor to maintain original column order
+TPM_long_all$Stage <- factor(TPM_long_all$Stage, levels = colnames(nMexpressed_noIntronS_prom))
+
+
+
+# Create the violin plot
+violin_plot_all <- ggplot(TPM_long_all, aes(x = Stage, y = TPM)) +
+  geom_violin(fill = "lightcyan", color = "black") +  # Add violins
+  geom_jitter(width = 0.2, size = 0.01, alpha = 0.3, color = "blue") +  # Add points for each value
+  scale_y_log10(limits = c(1e-03, 1e+04)) +  # Set y-axis to log10 scale
+  labs(x = "Stage", y = "Log10(TPM)", title = "Genes expressed in nM without recapped introns") +
+  theme_classic() +  # Use classic theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+
+```
+
+## Enhancer
+
+```{r}
+library(CAGEfightR)
+
+# I include chromosome seqlengths to the cager object because quickEnhancers required it
+seqlengths(rowRanges(CTSStagCountSE(CTSS_cluster))) <- seqlengths(BSgenome.Hsapiens.UCSC.hg38)[1:23]
+seqlengths(rowRanges(CTSStagCountSE(cluster_lowthr_prom))) <- seqlengths(BSgenome.Hsapiens.UCSC.hg38)[1:23]
+# I specify chromosomes 1:23 that are the ones I have in my cagexp (BSgenome has many more)
+seqlevels(rowRanges(CTSStagCountSE(CTSS_cluster)))
+seqlengths(rowRanges(CTSStagCountSE(CTSS_cluster)))
+
+enh = quickEnhancers(CTSS_cluster)
+#BC = clusterBidirectionally(cons_cluster, balanceThreshold=0.95)
+
+enh_conclu = quickEnhancers(cons_cluster) # calling enhancers from CTSS_cluster or cons_cluster cage objects gives the same result.
+enh_conclu = quickEnhancers(cluster_lowthr_prom) # calling enhancers from low threshold TPM cage object gives the same result.
+
+
+enh_gr = GRanges(rownames(assays(enh)$enhancers)) # this gives you the granges of the enhancers
+rowRanges(assays(enh)$enhancers) # this has two columns and no idea what it is
+rownames(assays(enh)$enhancers) # this gives the rownames that assay that are enhancers coordinates
+enh_rawcounts = assays(enh)$enhancers # this gives the rowcounts per sample mapping at each enhancer. USEFUL!
+
+
+
+# You don't need this GRanges with raw counts
+# Convert enhancer_rawCounts matrix into a df and a GRanges
+# Extract genomic coordinates from row names
+# coords_list <- strsplit(rownames(enh_rawcounts), "[:-]")  # Splitting by ":" and "-"
+# # Convert extracted values into separate vectors
+# seqnames <- sapply(coords_list, function(x) x[1])  # Chromosome
+# starts <- as.numeric(sapply(coords_list, function(x) x[2]))  # Start position
+# ends <- as.numeric(sapply(coords_list, function(x) x[3]))  # End position
+# 
+# 
+# enh_rawcounts_df <- as.data.frame(enh_rawcounts)
+# enh_rawcounts_df$seqnames <- seqnames
+# enh_rawcounts_df$start <- starts
+# enh_rawcounts_df$end <- ends
+# enh_rawcounts_df$strand <- "*"
+# 
+# enh_counts_gr <- GRanges(seqnames = enh_rawcounts_df$seqnames, 
+#                          ranges = IRanges(start = enh_rawcounts_df$start, end = enh_rawcounts_df$end),
+#                          strand = enh_rawcounts_df$strand,
+#                          mcols = enh_rawcounts_df[, 1:ncol(enh_rawcounts)])  # Keeping matrix columns as metadata
+
+
+### FOR MONDAY
+# check if enhancer signal is higher at nuclear compared to total samples
+# use normalised count matrix of TSS from CAGEobject and subset scores overlapping to our called enhancers (all of them)
+# use plyranges
+# first split nuclear and total
+# group by overlap
+# summarize
+# join table
+
+# later you can add a column with annotations: overlappping encode_promoters encode_enhancers non_overlapping or whatever you want
+
+BiocManager::install("plyranges")
+library(plyranges) 
+enh_gr
+cluster_lowthr_prom
+
+# Extract normalized CTSS (CAGE Transcription Start Site) counts
+tss_counts <- CTSStagCountSE(cluster_lowthr_prom)  # SummarizedExperiment object
+tss_gr <- rowRanges(tss_counts)  # Get GRanges object for TSS
+
+# Extract normalized count matrix
+norm_counts <- as.data.frame(assay(tss_counts, "normalizedTpmMatrix"))
+# Find which TSS sites overlap with enhancers
+overlaps <- findOverlaps(enh_gr, tss_gr)  # Query = enhancers, Subject = TSS
+# Sum normalized counts of overlapping TSS per enhancer
+subset_norm_counts <- rowsum(norm_counts[overlaps@to, ], group = overlaps@from)
+
+subset_norm_counts <- subset_norm_counts %>%
+  mutate(sum_nuclear = rowSums(subset_norm_counts[,1:5])) %>%
+  mutate(sum_total = rowSums(subset_norm_counts[,6:10])) %>%
+  mutate(nucl_tot = sum_nuclear>sum_total) %>% # 23008 enhancers have higher signal in nuclear than total (out of 34174)
+  mutate(seqnames = enh_rawcounts_df$seqnames,
+         start = enh_rawcounts_df$start,
+         end = enh_rawcounts_df$end,
+         strand = enh_rawcounts_df$strand)
+subset_norm_counts_GR = GRanges(seqnames = subset_norm_counts$seqnames,
+                                ranges = IRanges(start = subset_norm_counts$start,
+                                        end = subset_norm_counts$end))
+
+
+## Encode promoter annotation to filter out enhancers mapping there
+# https://screen.encodeproject.org/
+# Downloads - candidate promoters (hg38)
+
+encode_promoters = read.table("~/Desktop/cellcycle/encode/encode_promoters_GRCh38.bed",
+                              header = F,
+                              sep = "\t",
+                              stringsAsFactors = F,
+                              colClasses = c("factor", "integer", "integer", "character", "character", "character"))
+encode_enhancers = read.table("~/Desktop/cellcycle/encode/encode_enhancers_GRCh38.bed",
+                              header = F,
+                              sep = "\t",
+                              stringsAsFactors = F,
+                              colClasses = c("factor", "integer", "integer", "character", "character", "character"))
+
+
+encode_promoters_gr = GRanges(seqnames = encode_promoters$V1,
+                              ranges = IRanges(start = encode_promoters$V2,
+                                      end = encode_promoters$V3))
+# enh_nonprom_gr = enh_gr[!overlapsAny(enh_gr, encode_promoters_gr)]
+encode_enhancers_gr = GRanges(seqnames = encode_enhancers$V1,
+                              ranges = IRanges(start = encode_enhancers$V2,
+                                               end = encode_enhancers$V3,
+                                               enhancerID = encode_enhancers$V5,
+                                               enhancer_annot = encode_enhancers$V6))
+# enh_filt_gr = enh_nonprom_gr[overlapsAny(enh_nonprom_gr, encode_enhancers_gr)]
+# enh_noprom_noenh = enh_nonprom_gr[!overlapsAny(enh_nonprom_gr, encode_enhancers_gr)]
+
+
+## assign enhancers that overlap with encode promoters. 2790 detected enhancers overlaps with encode enhancers (out of 34174)
+overlaps_encode_prom = findOverlaps(subset_norm_counts_GR, encode_promoters_gr)
+valid_indices <- queryHits(overlaps_encode_prom) # I had to do this because there might be duplicated or unexpected indices that flaged wrongly
+valid_indices <- valid_indices[valid_indices <= nrow(subset_norm_counts)]  # Filter valid indices
+subset_norm_counts$overlap_encode_prom <- FALSE  # Default
+subset_norm_counts$overlap_encode_prom[valid_indices] <- TRUE  # Assign TRUE only to valid rows
+
+## assign enhancers that overlap with encode enhancers. 16583 detected enhancers overlaps with encode enhancers (out of 34174)
+overlaps_encode_enh = findOverlaps(subset_norm_counts_GR, encode_enhancers_gr)
+subset_norm_counts$overlap_encode_enhancers <- FALSE  # Default
+subset_norm_counts$overlap_encode_enhancers[queryHits(overlaps_encode_enh)] <- TRUE  # Assign TRUE only to valid rows
+
+
+subet_norm_counts_Hnuclear = subset_norm_counts[which(subset_norm_counts$nucl_tot == T),]
+subet_norm_counts_Htotal = subset_norm_counts[which(subset_norm_counts$nucl_tot == F),]
+
+df_long2 <- pivot_longer(subet_norm_counts_Hnuclear, cols = c(overlap_encode_prom, overlap_encode_enhancers), names_to = "Category", values_to = "Value")
+
+# Count occurrences of TRUE and FALSE
+df_count <- as.data.frame(table(df_long2$Category, df_long$Value))
+colnames(df_count) <- c("Category", "Value", "Freq")
+
+# Customize labels
+df_count$Label <- paste(df_count$Category, df_count$Value, sep = " - ")
+
+# Plot the histogram
+ggplot(df_count, aes(x = Label, y = Freq, fill = Value)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Enhancers with higher score in nuclear vs total RNA (23,008)", x = "Groups", y = "Count") +
+  scale_fill_manual(values = c("TRUE" = "blue", "FALSE" = "red")) +
+  theme_minimal()
+
+  
+
+
+## Boxplot enhancer scores
+
+subset_norm_counts_fil = subset_norm_counts %>%
+  filter(!(sum_nuclear == 0 & sum_total == 0))
+# This filter is removing some enhancers that looks true just because nS_A or B have higher values
+# subset_norm_counts_fil <- subset_norm_counts %>%
+#   mutate(max = apply(select(., 1:10), 1, max)) %>%  # Create 'max' column with highest value from columns 1 to 10
+#   filter(!(nS_A > max | nS_B > max))  # Remove rows where nS_A or nS_B is greater than 'max'
+
+
+
+subet_norm_counts_Hnuclear = subset_norm_counts_fil[which(subset_norm_counts_fil$nucl_tot == T),]
+subet_norm_counts_Htotal = subset_norm_counts_fil[which(subset_norm_counts_fil$nucl_tot == F),]
+subet_norm_counts_Htotal = subet_norm_counts_Htotal %>%
+  mutate(sum_nuclear = ifelse(sum_nuclear == 0, 1e-4, sum_nuclear)) %>%
+  mutate(sum_total = ifelse(sum_total == 0, 1e-04, sum_total))
+
+subet_norm_counts_Hnuclear = subet_norm_counts_Hnuclear %>%
+  mutate(sum_nuclear = ifelse(sum_nuclear == 0, 1e-4, sum_nuclear)) %>%
+  mutate(sum_total = ifelse(sum_total == 0, 1e-04, sum_total))
+
+
+df_long <- pivot_longer(subet_norm_counts_Hnuclear, cols = c(overlap_encode_prom, overlap_encode_enhancers), names_to = "Category", values_to = "Value")
+
+df_long$Label <- paste(df_long$Category, df_long$Value, sep = " - ")
+
+# Plot boxplot
+ggplot(df_long, aes(x = Label, y = sum_total, fill = Value)) +
+  #geom_violin(trim = FALSE, alpha = 0.7) +  # Violin plot with transparency
+  geom_point(alpha = 0.5, size = 0.5, color = "grey",
+             position = position_jitter(width = 0.2)) +
+  geom_boxplot(width = 0.4, outlier.shape = NA, alpha = 0.7) +  # Add boxplot inside
+  labs(title = "Score of enhancers (higher score in nuclear vs total)", x = "Groups", y = "sum_total") +
+  scale_y_log10(limits = c(1e-5, 1e+05),
+                breaks = c(1e-5, 1e-3, 1e-1, 1e+1, 1e+03, 1e+05)) +
+  scale_fill_manual(values = c("TRUE" = "blue", "FALSE" = "red")) +
+  theme_minimal()
+
+
+
+
+## Distribution of number of enhancers per group of nuclear samples
+
+subset_norm_counts_fil <- subset_norm_counts_fil %>%
+  rowwise() %>%  # Process each row individually
+  mutate(sum_samplesNuc = sum(c_across(1:5) > 0.0001)) %>%
+  mutate(median_nuc = sum_nuclear/sum_samplesNuc) %>%
+  ungroup()
+
+df_count <- subset_norm_counts_fil %>%
+  count(sum_samplesNuc)
+
+p1 = ggplot(df_count, aes(x = sum_samplesNuc, y = n)) +
+  geom_point(size = 3, color = "blue") +  # Dots with size 3 and blue color
+  labs(title = "Distribution of enhancers per grouped samples (nuclear)",
+       x = "Number of samples",
+       y = "Number of enhancers") +
+  scale_y_continuous(limits = c(800, 10000),
+       breaks = c(0, 2000, 4000, 6000, 8000, 10000)) +
+  theme_minimal()
+
+## Distribution of score of enhancers per group of nuclear samples
+p2 = ggplot(subset_norm_counts_fil, aes(x = factor(sum_samplesNuc), y = median_nuc)) +
+  geom_boxplot(outlier.alpha = 0.5) +  # Boxplot with slightly transparent outliers
+  labs(title = "Distribution of sum_nuclear per grouped samples (nuclear)",
+       x = "grouped nuclear samples",
+       y = "sum_nuclear/nsamples") +
+  scale_y_log10(limits = c(1e-3, 1e+04),
+                breaks = c(1e-3, 1e-2, 1, 1e+02, 1e+04)) +
+  theme_minimal()
+
+
+
+####
+## Distribution of number of enhancers per group of TOTAL samples
+
+subset_norm_counts_fil <- subset_norm_counts_fil %>%
+  rowwise() %>%  # Process each row individually
+  mutate(sum_samplesTot = sum(c_across(6:10) > 0.0001)) %>%
+  mutate(median_tot = sum_total/sum_samplesTot) %>%
+  ungroup()
+
+df_count <- subset_norm_counts_fil %>%
+  count(sum_samplesTot)
+
+p1 = ggplot(df_count, aes(x = sum_samplesTot, y = n)) +
+  geom_point(size = 3, color = "blue") +  # Dots with size 3 and blue color
+  labs(title = "Distribution of enhancers per grouped samples (total)",
+       x = "Number of samples",
+       y = "Number of enhancers") +
+  scale_y_continuous(limits = c(800, 10000),
+       breaks = c(0, 2000, 4000, 6000, 8000, 10000)) +
+  theme_minimal()
+
+## Distribution of score of enhancers per group of nuclear samples
+p2 = ggplot(subset_norm_counts_fil, aes(x = factor(sum_samplesTot), y = median_tot)) +
+  geom_boxplot(outlier.alpha = 0.5) +  # Boxplot with slightly transparent outliers
+  labs(title = "Distribution of sum_total per grouped samples (total)",
+       x = "grouped total samples",
+       y = "sum_total/nsamples") +
+  scale_y_log10(limits = c(1e-3, 1e+04),
+                breaks = c(1e-3, 1e-2, 1, 1e+02, 1e+04)) +
+  theme_minimal()
+
+
+
+  
+
+# Distribution of enhancer score per sample
+
+df_long <- subset_norm_counts_fil %>%
+  select(1:10) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") #%>%
+  #mutate(Value = ifelse(Value == 0, 1e-4, Value))
+  
+ggplot(df_long, aes(x = factor(Variable, levels = unique(Variable)), y = Value)) +
+  geom_boxplot(outlier.alpha = 0.5) +  # Boxplot with slightly transparent outliers
+  labs(title = "Enhancer signal",
+       x = "Samples",
+       y = "tpm values (log scaled)") +
+  scale_y_log10(limits = c(1e-04, 1e+4),
+                breaks = c(1e-4, 1e-2, 1, 1e+2, 1e+4)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x labels
+
+
+
+## Distance to promoters
+
+# Filter out detected enhancers overlapping promoters
+subset_norm_counts_fil_GR = GRanges(seqnames = subset_norm_counts_fil$seqnames,
+                                                   ranges = IRanges(start = subset_norm_counts_fil$start,
+                                                                    end = subset_norm_counts_fil$end),
+                                                   strand = subset_norm_counts_fil$strand)
+annotated_enhancers = annotatePeak(subset_norm_counts_fil_GR, 
+                                   TxDb = txdb.ensembl, 
+                                   tssRegion = c(-500, 200))
+annotated_enhancers_df = as.data.frame(annotated_enhancers@anno)
+
+
+subset_norm_counts_anno_fil = subset_norm_counts_fil %>%
+  mutate(distanceToTSS = annotated_enhancers_df$distanceToTSS,
+         geneStrand = annotated_enhancers_df$geneStrand,
+         geneId = annotated_enhancers_df$geneId)
+
+
+#correlation distance to promoter vs sum/nsamples
+
+df_tmp = subset_norm_counts_fil %>%
+  mutate(distanceToTSS = ifelse(distanceToTSS == 0, 0.1, distanceToTSS),
+         overlaps = ifelse(overlap_encode_prom == T, "prom", overlap_encode_enhancers),
+         overlaps = ifelse(overlaps == T, "enh", overlaps),
+         overlaps = ifelse(overlaps == "prom" & overlap_encode_enhancers == T, "prom_enh", overlaps),
+         median_nuc = ifelse(is.na(median_nuc), 1e-4, median_nuc),
+         median_tot = ifelse(is.na(median_tot), 1e-4, median_tot))
+#df_tmp$overlaps = as.factor(df_tmp$overlaps)
+
+
+p3 = ggplot(df_tmp, aes(x = abs(distanceToTSS), y = median_tot, color = overlaps)) +
+  geom_point(alpha = 0.5, size = 0.3) +  # Scatter plot with transparency
+  geom_smooth(method = "lm", color = "red", se = TRUE) +  # Linear regression line
+  scale_x_log10() +  # Log scale for X-axis (Distance to TSS)
+  scale_y_log10() +  # Log scale for Y-axis (Median Nuclear Signal)
+  labs(title = "Log-Log Correlation: Distance to TSS vs TotalSum/nSamples Signal",
+       x = "Distance to TSS (log10)",
+       y = "TotalSum/nSamples Signal (log10)") +
+  theme_minimal() +
+  scale_color_manual(values = c("enh" = "blue", "FALSE" = "grey", "prom" = "red", "prom_enh" = "orange"))
+
+
+# number of enhancers with signal > 0.0001 per sample
+
+df_counts <- df_tmp %>%
+  summarise(across(1:10, ~ sum(. > 0))) %>%  # Count rows > 0.0001 per column
+  pivot_longer(cols = everything(), names_to = "Column", values_to = "Count")  # Reshape for ggplot
+
+# Plot as dot plot
+p4 = ggplot(df_counts, aes(x = factor(Column, levels = unique(Column)), y = Count)) +
+  geom_point(size = 3, color = "blue") +  # Dots with size 3 and blue color
+  labs(title = "Enhancers tpm > 0 per sample",
+       x = "Samples",
+       y = "Count of Rows > 0") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rot
+
+
+
+
+
+## HEATMAP
+
+library(ComplexHeatmap)
+library(circlize)
+
+# Select only the first 5 columns with enhancer expression scores
+heatmap_data <- subset_norm_counts_fil[, 1:5]
+
+# Apply log10 transformation (adding a small pseudo-count to avoid log(0) issues)
+heatmap_data_log <- log10(heatmap_data + 1e-6)  # Small pseudo-count to avoid -Inf
+
+# Define color mapping: blue for low, white for medium, red for high expression
+col_fun <- colorRamp2(c(min(heatmap_data_log), 0, max(heatmap_data_log)), c("blue", "white", "red"))
+
+# Create heatmap with hierarchical clustering of rows
+Heatmap(heatmap_data_log,
+        name = "Log10(Expression)",  # Legend title
+        col = col_fun,  # Color scale
+        cluster_rows = TRUE,  # Hierarchical clustering of enhancers
+        cluster_columns = FALSE,  # Keep conditions in fixed order
+        show_row_names = FALSE,  # Hide enhancer names if too many
+        show_column_names = TRUE,  # Show condition names
+        row_dend_reorder = TRUE,  # Reorder rows based on hierarchical clustering
+        column_title = "Enhancer Expression (Log10) Across Conditions",
+        heatmap_legend_param = list(title = "Log10(Relative Expression)"))
+
+
+
+# Convert to matrix (pheatmap requires a matrix input)
+heatmap_matrix <- as.matrix(heatmap_data)
+
+# Plot the heatmap
+pheatmap(heatmap_matrix,
+         scale = "row",          # Normalize expression within rows (relative expression)
+         cluster_rows = TRUE,    # Cluster enhancers based on similarity
+         cluster_cols = FALSE,   # Do not cluster conditions (keep them in order)
+         color = colorRampPalette(c("blue", "white", "red"))(100),  # Blue for low, red for high expression
+         show_rownames = FALSE,  # Hide row names if there are too many
+         show_colnames = TRUE)   # Show column names
+
+
+
+
+
+
+
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+
+#position of switching superclasses
+group_pos2 = which(!duplicated(rev(tmp_IQW_GR$SOM))) - 0.5 # this calculates the positions where a new group starts
+
+
+
+#prepare data
+coords=c(-500, 500)
+windows<-promoters(tmp_IQW_GR, -coords[1], coords[2])
+seq<-getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+pattern_list<-c("GC","CG","SS","YCY","AT","TA","TATA")
+pattern<-PatternHeatmap(seq, pattern_list[6], coords=coords)
+pattern_smoothed<-smoothHeatmap(pattern,
+                                sigma = c(0.5,0.01),
+                                output.size=c(500,1000),
+                                algorithm="kernel")
+plotHeatmapList(pattern_smoothed,color="Reds")
+
+dev.flush() # to ensure that all plotting commands are executed before and after adding the lines
+
+for (pos in group_pos2) {
+  abline(h = pos, col = "black", lwd = 0.5)
+} # Add horizontal lines to the heatmap plot
+
+dev.flush()
+
+
+
+```
+
+# RNA-seq publicly data
+
+```{r}
+
+rpe1_norm = read.csv("~/Desktop/publicly_RPE1_expression/GSE229160_RAW/GSM7156128_1_R_001_csv.csv", header = T, sep = ",")
+library(edgeR)
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# Retrieve the transcript ID and transcript support level (TSL)
+gene_length <- getBM(
+  attributes = c("ensembl_gene_id", "chromosome_name", "start_position", "end_position", "external_gene_name"),
+  mart = ensembl
+)
+rpe1_raw = read.csv("~/Desktop/publicly_RPE1_expression/GSE146121_RPE1-hTERT_RNA-seq_counts_per_gene.csv", header = T, sep = ",")
+rpe1_raw$Ensembl.gene.id <- sub("\\..*", "", rpe1_raw$Ensembl.gene.id)
+colnames(rpe1_raw)[1] = "ensembl_gene_id"
+rpe1_rawtotpm <- merge(rpe1_raw, gene_length, by = "ensembl_gene_id") %>%
+  mutate(gene_length = end_position - start_position)
+
+
+# Extract raw counts and gene lengths
+rpe1_rawtotpm_matrix <- as.matrix(rpe1_rawtotpm[, 2:5])  # Assuming columns 2-5 are raw counts
+gene_lengths_kb <- rpe1_rawtotpm$gene_length / 1000  # Convert bp to kilobases
+
+# Step 1: Normalize by gene length
+counts_per_kb <- rpe1_rawtotpm_matrix / gene_lengths_kb
+
+# Step 2: Normalize by total counts per million
+tpm <- t(t(counts_per_kb) / colSums(counts_per_kb)) * 1e6
+
+# Step 3: Add TPM values back to the dataframe
+tpm_df <- as.data.frame(tpm)
+colnames(tpm_df) <- colnames(rpe1_rawtotpm)[2:5]  # Keep replicate names
+tpm_df$ensembl_gene_id <- rpe1_rawtotpm$ensembl_gene_id  # Add gene IDs
+tpm_df$external_gene_name <- rpe1_rawtotpm$external_gene_name
+
+# Function to calculate standard error
+stderr <- function(x) sd(x) / sqrt(length(x))
+tpm_df$Mean <- rowMeans(tpm_df[, 1:4])  # Compute row-wise mean
+tpm_df$SE <- apply(tpm_df[, 1:4], 1, stderr)  # Compute row-wise standard error
+
+
+nM_intronSignal_lowProm_ensembl
+
+tpm_noExpressed_genes = tpm_df %>%
+  filter(ensembl_gene_id %in% nM_intronSignal_lowProm_ensembl$ensembl_gene_id) %>%
+  arrange(desc(Mean))
+tpm_noExpressed_genes <- tpm_noExpressed_genes %>%
+  mutate(external_gene_name = fct_reorder(external_gene_name, Mean, .desc = TRUE)) %>%
+  filter(!external_gene_name == "") %>%
+  mutate(Mean = ifelse(Mean == 0, 1e-4, Mean))
+
+
+ggplot(tpm_noExpressed_genes, aes(x = external_gene_name, y = Mean)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +  # Bar plot
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.3, color = "red") +  # Error bars
+  labs(title = "Gene Expression with Standard Deviation",
+       x = "Gene Name",
+       y = "Mean Expression") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) +
+  scale_y_log10(limits = c(1e-4, 1e+2))
+
+```
+
+# ENCODE CAGE
+
+```{r}
+tM_intronSignal_good_Iwidth
+
+
+# Define a vector with the paths of the BigWig files
+bw_files_plus <- list.files(path = "~/Desktop/publicly_RPE1_data/CAGE/", pattern = "_plus.bigWig$", full.names = TRUE)
+bw_files_minus <- list.files(path = "~/Desktop/publicly_RPE1_data/CAGE/", pattern = "_plus.bigWig$", full.names = TRUE)
+
+# Ensure both lists are sorted the same way
+bw_files_plus <- sort(bw_files_plus)
+bw_files_minus <- sort(bw_files_minus)
+
+# Function to import and merge plus & minus strand for a single sample
+merge_bw <- function(plus_file, minus_file) {
+  gr_plus <- import(plus_file)
+  gr_minus <- import(minus_file)
+  # Assign strand information
+  strand(gr_plus) <- "+"
+  strand(gr_minus) <- "-"
+  # Combine both strands into a single GRanges object
+  gr_combined <- c(gr_plus, gr_minus)
+  return(gr_combined)
+}
+
+# Create a list of GRanges, one per sample
+gr_list <- mapply(merge_bw, bw_files_plus, bw_files_minus, SIMPLIFY = FALSE)
+names(gr_list) <- gsub(".bigwig", "", basename(bw_files_plus))  # Name by sample
+
+
+
+library(GenomicRanges)
+
+introns_gr = GRanges(seqnames = tM_intronSignal_good_Iwidth$seqnames,
+                     ranges = IRanges(start = tM_intronSignal_good_Iwidth$pos-1,
+                                      end = tM_intronSignal_good_Iwidth$pos-1),
+                     strand = tM_intronSignal_good_Iwidth$strand)
+# Function to extract overlapping ranges from a GRanges object
+extract_overlapping <- function(gr, query_gr) {
+  overlaps <- findOverlaps(gr, query_gr)
+  gr[queryHits(overlaps)]  # Extract overlapping ranges
+}
+
+# Apply the function to all GRanges in gr_list
+gr_list_overlapping <- lapply(gr_list, extract_overlapping, query_gr = introns_gr)
+
+# Optionally: Remove empty elements (if no overlaps were found in some samples)
+gr_list_overlapping_2nt <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+gr_list_overlapping_1nt <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+
+allintrons_2nt_gr <- GRanges(
+  seqnames = intronID_tsl1$seqnames, 
+  ranges = IRanges(start = intronID_tsl1$start,
+                   end = intronID_tsl1$start),
+  strand = intronID_tsl1$strand,
+  intronID = intronID_tsl1$intronID,
+  gene_name = intronID_tsl1$external_gene_name
+)
+
+# Apply the function to all GRanges in gr_list
+gr_list_overlapping <- lapply(gr_list, extract_overlapping, query_gr = allintrons_2nt_gr)
+
+# Optionally: Remove empty elements (if no overlaps were found in some samples)
+gr_list_overlapping_2nt_all <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+gr_list_overlapping_1nt_all <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+
+
+
+
+
+
+
+gene_gr = GRanges(seqnames = gene_length$chromosome_name,
+                  ranges = IRanges(start = gene_length$start_position,
+                                   end = gene_length$end_position),
+                  ensembl_gene_id = gene_length$ensembl_gene_id,
+                  external_gene_name = gene_length$external_gene_name)
+  
+
+
+for (i in seq_along(gr_list_overlapping_2nt)) {
+  gr <- gr_list_overlapping_2nt[[i]]  # Access the ith GRanges object in the list
+  
+  # Find intersections between this GRanges and gene_gr
+  hits <- findOverlaps(gr, gene_gr)
+  
+  # Add gene_gr column to gr (initialize with NA values)
+  gr$gene_gr <- NA
+  
+  # Assign the gene_gr value from the gene_gr object for intersecting ranges
+  gr$gene_gr[queryHits(hits)] <- gene_gr$gene_gr[subjectHits(hits)]
+  
+  # Update the list with the modified GRanges object
+  gr_list_overlapping_2nt[[i]] <- gr
+}
+
+
+  
+
+# Find intersections of intron signal with genes
+gr_list_overlapping <- lapply(gr_list_overlapping_1nt, extract_overlapping, query_gr = gene_gr)
+gr_list_overlapping_2nt_gene <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+# Extract the gene_gr information from the gene_gr object for the intersecting ranges
+gr_list_overlapping$gene_gr <- NA  # Initialize column with NA values
+gr_list_overlapping$gene_gr[queryHits(hits)] <- gene_gr$gene_gr[subjectHits(hits)]
+
+
+```
+
+## Ekjot
+
+```{r}
+
+consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster))
+consclusterTPM_df = as.data.frame(consensusClustersTpm(cons_cluster))
+Ekjok_genes = c("ZBTB26","ZNF600", "TCF12", "ZNF610", "MAX", "POLR2A", "ZNF561", "L3MBTL2", "SIN3A", "ZNF335", "ZBTB44", "ZNF341",
+                "ZFP36", "GLIS1", "EZH2", "GLIS2")
+Ekjot = consclusterTPM_df[,6:10] %>% cbind(consclusterGR_df[,c(1:3,5,12,13)])
+Ekjot = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+CTSSGR_df = as.data.frame(CTSSnormalizedTpmGR(cons_cluster,6))
+CTSSTPM_df = as.data.frame(CTSSnormalizedTpmDF(cons_cluster))
+Ekjot_CTSS = CTSSTPM_df[,6:10] %>% cbind(CTSSGR_df[,c(1:5)])
+Ekjot_CTSS = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+
+write.table(Ekjot, file = "~/Desktop/cellcycle/Gene_Expression_Ekjot.csv", quote = F, col.names = T, row.names = F)
+```

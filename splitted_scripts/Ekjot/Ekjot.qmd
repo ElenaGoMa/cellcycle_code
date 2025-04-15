@@ -1,0 +1,62 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+CTSS_norm = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+
+
+# library(CAGEr)
+# library(BSgenome.Hsapiens.UCSC.hg38)
+# library(rtracklayer)
+# library(stringr)
+# library(dplyr)
+# library(tidyr)
+# library(magrittr)
+# library(ggplot2)
+
+# from CAGEconsprom scripts
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+# from promoters script
+# saveRDS(totalSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/totalSOM_consclusterGR_df.rds")
+# saveRDS(nuclearSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/nuclearSOM_consclusterGR_df.rds")
+# saveRDS(fractionSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/fractionSOM_consclusterGR_df.rds")
+
+
+# from introns script
+# saveRDS(cluster_lowthr_prom, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/3_introns/cluster_lowthr_prom.rds")
+# saveRDS(transcript_data, file = "~/Desktop/cellcycle/R/splitted_scripts/3_introns/transcript_data.rds")
+# saveRDS(intronID_tsl1, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/3_introns/intronID_tsl1.rds")
+# saveRDS(tM_intronSignal_good_unique, "~/Desktop/cellcycle/R/splitted_scripts/3_introns/tM_intronSignal_good_unique.rds")
+
+```
+
+## Ekjot
+
+```{r}
+
+consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster))
+consclusterTPM_df = as.data.frame(consensusClustersTpm(cons_cluster))
+Ekjok_genes = c("ZBTB26","ZNF600", "TCF12", "ZNF610", "MAX", "POLR2A", "ZNF561", "L3MBTL2", "SIN3A", "ZNF335", "ZBTB44", "ZNF341",
+                "ZFP36", "GLIS1", "EZH2", "GLIS2")
+Ekjot = consclusterTPM_df[,6:10] %>% cbind(consclusterGR_df[,c(1:3,5,12,13)])
+Ekjot = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+CTSSGR_df = as.data.frame(CTSSnormalizedTpmGR(cons_cluster,6))
+CTSSTPM_df = as.data.frame(CTSSnormalizedTpmDF(cons_cluster))
+Ekjot_CTSS = CTSSTPM_df[,6:10] %>% cbind(CTSSGR_df[,c(1:5)])
+Ekjot_CTSS = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+
+write.table(Ekjot, file = "~/Desktop/cellcycle/Gene_Expression_Ekjot.csv", quote = F, col.names = T, row.names = F)
+```

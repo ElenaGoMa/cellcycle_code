@@ -1,0 +1,243 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+CTSS_norm = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+
+
+# library(CAGEr)
+# library(BSgenome.Hsapiens.UCSC.hg38)
+# library(rtracklayer)
+# library(stringr)
+# library(dplyr)
+# library(tidyr)
+# library(magrittr)
+# library(ggplot2)
+
+# from CAGEconsprom scripts
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+# from promoters script
+# saveRDS(totalSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/totalSOM_consclusterGR_df.rds")
+# saveRDS(nuclearSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/nuclearSOM_consclusterGR_df.rds")
+# saveRDS(fractionSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/fractionSOM_consclusterGR_df.rds")
+
+
+# from introns script
+# saveRDS(cluster_lowthr_prom, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/3_introns/cluster_lowthr_prom.rds")
+# saveRDS(transcript_data, file = "~/Desktop/cellcycle/R/splitted_scripts/3_introns/transcript_data.rds")
+# saveRDS(intronID_tsl1, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/3_introns/intronID_tsl1.rds")
+# saveRDS(tM_intronSignal_good_unique, "~/Desktop/cellcycle/R/splitted_scripts/3_introns/tM_intronSignal_good_unique.rds")
+
+```
+
+# RNA-seq publicly data
+
+```{r}
+
+rpe1_norm = read.csv("~/Desktop/publicly_RPE1_expression/GSE229160_RAW/GSM7156128_1_R_001_csv.csv", header = T, sep = ",")
+library(edgeR)
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# Retrieve the transcript ID and transcript support level (TSL)
+gene_length <- getBM(
+  attributes = c("ensembl_gene_id", "chromosome_name", "start_position", "end_position", "external_gene_name"),
+  mart = ensembl
+)
+rpe1_raw = read.csv("~/Desktop/publicly_RPE1_expression/GSE146121_RPE1-hTERT_RNA-seq_counts_per_gene.csv", header = T, sep = ",")
+rpe1_raw$Ensembl.gene.id <- sub("\\..*", "", rpe1_raw$Ensembl.gene.id)
+colnames(rpe1_raw)[1] = "ensembl_gene_id"
+rpe1_rawtotpm <- merge(rpe1_raw, gene_length, by = "ensembl_gene_id") %>%
+  mutate(gene_length = end_position - start_position)
+
+
+# Extract raw counts and gene lengths
+rpe1_rawtotpm_matrix <- as.matrix(rpe1_rawtotpm[, 2:5])  # Assuming columns 2-5 are raw counts
+gene_lengths_kb <- rpe1_rawtotpm$gene_length / 1000  # Convert bp to kilobases
+
+# Step 1: Normalize by gene length
+counts_per_kb <- rpe1_rawtotpm_matrix / gene_lengths_kb
+
+# Step 2: Normalize by total counts per million
+tpm <- t(t(counts_per_kb) / colSums(counts_per_kb)) * 1e6
+
+# Step 3: Add TPM values back to the dataframe
+tpm_df <- as.data.frame(tpm)
+colnames(tpm_df) <- colnames(rpe1_rawtotpm)[2:5]  # Keep replicate names
+tpm_df$ensembl_gene_id <- rpe1_rawtotpm$ensembl_gene_id  # Add gene IDs
+tpm_df$external_gene_name <- rpe1_rawtotpm$external_gene_name
+
+# Function to calculate standard error
+stderr <- function(x) sd(x) / sqrt(length(x))
+tpm_df$Mean <- rowMeans(tpm_df[, 1:4])  # Compute row-wise mean
+tpm_df$SE <- apply(tpm_df[, 1:4], 1, stderr)  # Compute row-wise standard error
+
+
+nM_intronSignal_lowProm_ensembl = readRDS("~/Desktop/cellcycle/R/splitted_scripts/3_introns/M_intronSignal_prom_ensembl.rds")
+
+tpm_noExpressed_genes = tpm_df %>%
+  filter(ensembl_gene_id %in% nM_intronSignal_lowProm_ensembl$ensembl_gene_id) %>%
+  arrange(desc(Mean))
+tpm_noExpressed_genes <- tpm_noExpressed_genes %>%
+  mutate(external_gene_name = fct_reorder(external_gene_name, Mean, .desc = TRUE)) %>%
+  filter(!external_gene_name == "") %>%
+  mutate(Mean = ifelse(Mean == 0, 1e-4, Mean))
+
+
+ggplot(tpm_noExpressed_genes, aes(x = external_gene_name, y = Mean)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +  # Bar plot
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.3, color = "red") +  # Error bars
+  labs(title = "Gene Expression with Standard Deviation",
+       x = "Gene Name",
+       y = "Mean Expression") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) +
+  scale_y_log10(limits = c(1e-4, 1e+2))
+
+```
+
+# ENCODE CAGE
+
+```{r}
+tM_intronSignal_good_unique = readRDS("~/Desktop/cellcycle/R/splitted_scripts/3_introns/tM_intronSignal_good_unique.rds")
+
+tM_intronSignal_good_Iwidth = tM_intronSignal_good_unique %>%
+  mutate(intron_width = end_intron - start_intron) %>%
+  arrange(intron_width)
+
+# Define a vector with the paths of the BigWig files
+bw_files_plus <- list.files(path = "~/Desktop/publicly_RPE1_data/CAGE/", pattern = "_plus.bigWig$", full.names = TRUE)
+bw_files_minus <- list.files(path = "~/Desktop/publicly_RPE1_data/CAGE/", pattern = "_plus.bigWig$", full.names = TRUE)
+
+# Ensure both lists are sorted the same way
+bw_files_plus <- sort(bw_files_plus)
+bw_files_minus <- sort(bw_files_minus)
+
+# Function to import and merge plus & minus strand for a single sample
+merge_bw <- function(plus_file, minus_file) {
+  gr_plus <- import(plus_file)
+  gr_minus <- import(minus_file)
+  # Assign strand information
+  strand(gr_plus) <- "+"
+  strand(gr_minus) <- "-"
+  # Combine both strands into a single GRanges object
+  gr_combined <- c(gr_plus, gr_minus)
+  return(gr_combined)
+}
+
+# Create a list of GRanges, one per sample
+gr_list <- mapply(merge_bw, bw_files_plus, bw_files_minus, SIMPLIFY = FALSE)
+names(gr_list) <- gsub(".bigwig", "", basename(bw_files_plus))  # Name by sample
+
+
+
+library(GenomicRanges)
+
+introns_gr = GRanges(seqnames = tM_intronSignal_good_Iwidth$seqnames,
+                     ranges = IRanges(start = tM_intronSignal_good_Iwidth$pos-1,
+                                      end = tM_intronSignal_good_Iwidth$pos-1),
+                     strand = tM_intronSignal_good_Iwidth$strand)
+# Function to extract overlapping ranges from a GRanges object
+extract_overlapping <- function(gr, query_gr) {
+  overlaps <- findOverlaps(gr, query_gr)
+  gr[queryHits(overlaps)]  # Extract overlapping ranges
+}
+
+# Apply the function to all GRanges in gr_list
+gr_list_overlapping <- lapply(gr_list, extract_overlapping, query_gr = introns_gr)
+
+# Optionally: Remove empty elements (if no overlaps were found in some samples)
+gr_list_overlapping_2nt <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+gr_list_overlapping_1nt <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+
+intronID_tsl1 = readRDS("~/Desktop/cellcycle/R/splitted_scripts/3_introns/intronID_tsl1.rds")
+
+allintrons_2nt_gr <- GRanges(
+  seqnames = intronID_tsl1$seqnames, 
+  ranges = IRanges(start = intronID_tsl1$start,
+                   end = intronID_tsl1$start),
+  strand = intronID_tsl1$strand,
+  intronID = intronID_tsl1$intronID,
+  gene_name = intronID_tsl1$external_gene_name
+)
+
+# Apply the function to all GRanges in gr_list
+gr_list_overlapping <- lapply(gr_list, extract_overlapping, query_gr = allintrons_2nt_gr)
+
+# Optionally: Remove empty elements (if no overlaps were found in some samples)
+gr_list_overlapping_2nt_all <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+gr_list_overlapping_1nt_all <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+
+
+
+
+
+
+
+gene_gr = GRanges(seqnames = gene_length$chromosome_name,
+                  ranges = IRanges(start = gene_length$start_position,
+                                   end = gene_length$end_position),
+                  ensembl_gene_id = gene_length$ensembl_gene_id,
+                  external_gene_name = gene_length$external_gene_name)
+  
+
+
+for (i in seq_along(gr_list_overlapping_2nt)) {
+  gr <- gr_list_overlapping_2nt[[i]]  # Access the ith GRanges object in the list
+  
+  # Find intersections between this GRanges and gene_gr
+  hits <- findOverlaps(gr, gene_gr)
+  
+  # Add gene_gr column to gr (initialize with NA values)
+  gr$gene_gr <- NA
+  
+  # Assign the gene_gr value from the gene_gr object for intersecting ranges
+  gr$gene_gr[queryHits(hits)] <- gene_gr$gene_gr[subjectHits(hits)]
+  
+  # Update the list with the modified GRanges object
+  gr_list_overlapping_2nt[[i]] <- gr
+}
+
+
+  
+
+# Find intersections of intron signal with genes
+gr_list_overlapping <- lapply(gr_list_overlapping_1nt, extract_overlapping, query_gr = gene_gr)
+gr_list_overlapping_2nt_gene <- gr_list_overlapping[lengths(gr_list_overlapping) > 0]
+
+# Extract the gene_gr information from the gene_gr object for the intersecting ranges
+gr_list_overlapping$gene_gr <- NA  # Initialize column with NA values
+gr_list_overlapping$gene_gr[queryHits(hits)] <- gene_gr$gene_gr[subjectHits(hits)]
+
+
+```
+
+## Ekjot
+
+```{r}
+
+consclusterGR_df = as.data.frame(consensusClustersGR(cons_cluster))
+consclusterTPM_df = as.data.frame(consensusClustersTpm(cons_cluster))
+Ekjok_genes = c("ZBTB26","ZNF600", "TCF12", "ZNF610", "MAX", "POLR2A", "ZNF561", "L3MBTL2", "SIN3A", "ZNF335", "ZBTB44", "ZNF341",
+                "ZFP36", "GLIS1", "EZH2", "GLIS2")
+Ekjot = consclusterTPM_df[,6:10] %>% cbind(consclusterGR_df[,c(1:3,5,12,13)])
+Ekjot = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+CTSSGR_df = as.data.frame(CTSSnormalizedTpmGR(cons_cluster,6))
+CTSSTPM_df = as.data.frame(CTSSnormalizedTpmDF(cons_cluster))
+Ekjot_CTSS = CTSSTPM_df[,6:10] %>% cbind(CTSSGR_df[,c(1:5)])
+Ekjot_CTSS = Ekjot[which(Ekjot$genes %in% Ekjok_genes),]
+
+
+write.table(Ekjot, file = "~/Desktop/cellcycle/Gene_Expression_Ekjot.csv", quote = F, col.names = T, row.names = F)
+```

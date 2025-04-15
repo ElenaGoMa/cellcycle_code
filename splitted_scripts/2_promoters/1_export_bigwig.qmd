@@ -1,0 +1,64 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+cons_cluster = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+library(CAGEr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(rtracklayer)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+
+
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+```
+
+## Export bigwig
+
+```{r}
+
+# Get the sample labels from cons_cluster
+sample_labels <- cons_cluster$sampleLabels
+
+# Loop through each sample and export the corresponding BigWig files
+for (sample in sample_labels) {
+  
+  # Generate the track for the current sample
+  trk <- exportToTrack(CTSSnormalizedTpmGR(cons_cluster, sample))
+  
+  # Add genome sequence length information
+  trk@seqinfo@seqlengths <- seqlengths(BSgenome.Hsapiens.UCSC.hg38)
+  
+  # Split track by strand
+  trk_split <- split(trk, strand(trk), drop = TRUE)
+  
+  # Define file paths for the plus and minus strand BigWig files
+  plus_bw_path <- paste0("~/Desktop/cellcycle/bw/pair_newsamples/", sample, ".plus.bw")
+  minus_bw_path <- paste0("~/Desktop/cellcycle/bw/pair_newsamples/", sample, ".minus.bw")
+  
+  # Export the plus and minus strands as BigWig files
+  rtracklayer::export.bw(trk_split$`+`, plus_bw_path, format = "BigWig")
+  rtracklayer::export.bw(trk_split$`-`, minus_bw_path, format = "BigWig")
+  
+  # Print message after each export (optional)
+  message("Exported BigWig files for sample: ", sample)
+}
+
+```

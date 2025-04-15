@@ -1,0 +1,633 @@
+---
+title: "mergedReplicates"
+format: html
+editor: visual
+---
+
+## IMPORT CAGEr object
+
+```{r}
+cons_cluster = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+
+# library(CAGEr)
+# library(BSgenome.Hsapiens.UCSC.hg38)
+# library(rtracklayer)
+# library(stringr)
+# library(dplyr)
+# library(tidyr)
+# library(magrittr)
+# library(ggplot2)
+
+# from previous scripts
+# saveRDS(tmp_2, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/ce_canChr.rds")
+# saveRDS(newCAGE_cchr_samples_filt, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_cchr_samples_filt.rds")
+# saveRDS(newCAGE_mergRep, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_unnorm.rds")
+# saveRDS(CTSS_norm, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/CTSS_norm.rds")
+# saveRDS(CTSS_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_CTSS_promwidth.rds")
+# saveRDS(cons_cluster, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/1_CAGEconsprom/newCAGE_consclust_5tpm.rds")
+
+# from this script
+# saveRDS(totalSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/totalSOM_consclusterGR_df.rds")
+# saveRDS(nuclearSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/nuclearSOM_consclusterGR_df.rds")
+# saveRDS(fractionSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/fractionSOM_consclusterGR_df.rds")
+
+```
+
+## SOM PLOTTING
+
+Packages needed
+
+```{r, echo=F}
+# install.packages("kohonen")
+
+library(kohonen)
+library(tidyverse)
+library(rtracklayer)
+library(dplyr)
+```
+
+Damir code for SOM
+
+This is a function that you have to execute empty. This is for creating the matrix needed and plotting the SOM
+
+```{r}
+
+get_plot_som <- function(in_mat, xdim, ydim){
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))
+  label_unit <- table(som_obj$unit.classif)
+  tmp_name <- names(label_unit)
+  label_unit <- str_c("Class ", tmp_name, " (", label_unit, ")")
+  names(label_unit) <- tmp_name
+  tmp_df <- in_mat %>% as.data.frame() %>%
+    {cbind(class = som_obj$unit.classif, .)} %>%
+    pivot_longer(cols = !class,
+                 names_to = "stage",
+                 values_to = "value") %>%
+    mutate(stage = factor(stage,
+                          levels = colnames(in_mat)),
+           class = factor(class,
+                          levels = str_sort(unique(class), numeric = T)))
+  sum_stat <- tmp_df %>% group_by(class, stage) %>%
+    summarize(value = mean(value)) %>% ungroup()
+  out_plot <- tmp_df%>%
+    ggplot(aes(stage, value)) + geom_violin() +
+    geom_point(data = sum_stat) +
+    geom_line(data = sum_stat, aes(group = class)) +
+    facet_wrap(~ class, ncol = xdim, labeller = labeller(class = label_unit),
+               scale = "free_y",as.table = F) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  list(som = som_obj,
+       stat = sum_stat,
+       plot = out_plot)
+}
+
+## Nuclear palette
+  my_palette <- c("#000004FF", "#000004FF", "#000004FF", "#781C6DFF", "#781C6DFF","#BB3754FF","#BB3754FF","#BB3754FF", "#FCB519FF", "#FCB519FF", "#FCFFA4FF")
+  my_palette <- c("#000004FF", "#330A5FFF", "#781C6DFF", "#BB3754FF", "#ED6925FF", "#FCB519FF", "#FCFFA4FF")
+  
+## Total palette
+my_palette <- c("#000004FF", "#000004FF", "#781C6DFF", "#781C6DFF","#BB3754FF","#BB3754FF", "#FCB519FF", "#FCB519FF", "#FCFFA4FF", "#FCFFA4FF")
+## Fraction palette
+  my_palette <- c("#440154FF", "#33638DFF", "#29AF7FFF", "#DCE319FF")
+  
+  ## any palette
+colors_magma <- viridisLite::magma(5)
+
+
+
+get_plot_som_colors <- function(in_mat, xdim, ydim){
+  my_palette <- c("#440154FF", "#33638DFF", "#29AF7FFF", "#DCE319FF")
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))
+  label_unit <- table(som_obj$unit.classif)
+  tmp_name <- names(label_unit)
+  label_unit <- str_c("Class ", tmp_name, " (", label_unit, ")")
+  names(label_unit) <- tmp_name
+  tmp_df <- in_mat %>% as.data.frame() %>%
+    {cbind(class = som_obj$unit.classif, .)} %>%
+    pivot_longer(cols = !class,
+                 names_to = "stage",
+                 values_to = "value") %>%
+    mutate(stage = factor(stage,
+                          levels = colnames(in_mat)),
+           class = factor(class,
+                          levels = str_sort(unique(class), numeric = T)))
+  sum_stat <- tmp_df %>% group_by(class, stage) %>%
+    summarize(value = mean(value)) %>% ungroup()
+  out_plot <- tmp_df%>%
+    ggplot(aes(stage, value, fill = stage)) + geom_violin() +
+    geom_point(data = sum_stat) +
+    geom_line(data = sum_stat, aes(group = class)) +
+    facet_wrap(~ class, ncol = xdim, labeller = labeller(class = label_unit),
+               scale = "free_y",as.table = F) +
+    theme_light() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values = my_palette)
+  list(som = som_obj,
+       stat = sum_stat,
+       plot = out_plot)
+}
+```
+
+This is a shorter version to get the matrix without plotting the SOM, so you can use the matrix in aweSOM and plot it differently
+
+```{r}
+get_damir_som <- function(in_mat, xdim, ydim){
+  som_obj <- kohonen::som(in_mat,
+                          grid = somgrid(xdim, ydim, topo = "hexagonal"))}
+
+```
+
+Get consensuscluster tpm as input for SOM plotting
+
+```{r}
+
+concluTPM_5tpm = consensusClustersTpm(cons_cluster)
+
+## NUCLEAR SAMPLES
+
+concluTPM_nuc_5tpm = concluTPM_5tpm[,c(1:5)]
+# scale matrix
+matrix_nuclear_5tpm = t(base::scale(t(concluTPM_nuc_5tpm), center = F, scale = TRUE))
+set.seed(23)
+plot_som_nuclear_5tpm = get_plot_som_colors(matrix_nuclear_5tpm, 5, 5)
+
+
+
+## TOTAL SAMPLES
+
+concluTPM_tot_5tpm = concluTPM_5tpm[,c(6:10)]
+# scale matrix
+matrix_tot_5tpm = t(base::scale(t(concluTPM_tot_5tpm), center = F, scale = TRUE))
+set.seed(23)
+plot_som_tot_5tpm = get_plot_som_colors(matrix_tot_5tpm, 5, 5)
+```
+
+```{r}
+## NUCLEAR FRACTIONATION
+# modify colors my_palette from get_plot_som_colors function before executing this
+concluTPM_Sfrac_5tpm = concluTPM_5tpm[,c(3,8,11,12)]
+concluTPM_Sfrac_5tpm = concluTPM_Sfrac_5tpm[,c("tS", "nS_A", "nS_B", "nS")]
+colnames(concluTPM_Sfrac_5tpm) = c("tS", "cytS", "nsolS", "nS")
+
+# scale matrix
+matrix_Sfrac_5tpm = t(base::scale(t(concluTPM_Sfrac_5tpm), center = F, scale = TRUE))
+
+set.seed(23)
+plot_som_Sfrac_5tpm = get_plot_som_colors(matrix_Sfrac_5tpm, 5, 5)
+```
+
+Transfer SOM information to consensusclusterGR
+
+```{r}
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+library(ChIPseeker)
+
+consclusterGR <- consensusClustersGR(cons_cluster, sample = NULL, qLow = 0.1, qUp = 0.9)
+consClusterGR_ann <- annotatePeak(consclusterGR,
+                                          TxDb = txdb,
+                                          tssRegion = c(-100, 50),
+                                          sameStrand = TRUE,
+                                          level = "transcript")
+
+
+totalSOM_consclusterGR_df <-as.data.frame(consClusterGR_ann@anno) %>% cbind(as.data.frame(plot_som_tot_5tpm$som$unit.classif))
+colnames(consclustGR_annot_tmp)[25] = "SOM"
+nuclearSOM_consclusterGR_df <-as.data.frame(consClusterGR_ann@anno) %>% cbind(as.data.frame(plot_som_nuclear_5tpm$som$unit.classif))
+colnames(consclustGR_annot_tmp)[25] = "SOM"
+fractionSOM_consclusterGR_df <-as.data.frame(consClusterGR_ann@anno) %>% cbind(as.data.frame(plot_som_Sfrac_5tpm$som$unit.classif))
+colnames(consclustGR_annot_tmp)[25] = "SOM"
+
+
+# saveRDS(totalSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/totalSOM_consclusterGR_df.rds")
+# saveRDS(nuclearSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/nuclearSOM_consclusterGR_df.rds")
+# saveRDS(fractionSOM_consclusterGR_df, "/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/fractionSOM_consclusterGR_df.rds")
+```
+
+Preparing GRanges and SOMsuperclasses for heatmap
+
+```{r}
+# Prepare groups of clusters with similar profile
+
+G0_up_tclass = c(3,4,5,8,9,10)
+G0_up_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G0_up_tclass),]
+G0_down_tclass = c(11,16,17,22,23)
+G0_down_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G0_down_tclass),]
+S_tclass = c(12,24,25)
+S_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% S_tclass),]
+G2_tclass = c(2,18,19,23)
+G2_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% G2_tclass),]
+flat_tclass = c(1,6,7)
+flat_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% flat_tclass),]
+M_down_tclass = c(13,14,19)
+M_down_t = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM %in% M_down_tclass),]
+
+nucSup_class = c(1,2,6,7,8,11,12,16,17,18)
+nucSup = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% nucSup_class),]
+chrSdown_class = c(10,14,20)
+chrSdown = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% chrSdown_class),]
+
+frac1_class = c(5,21)
+frac1 = fractionSOM_consclusterGR_df[which(fractionSOM_consclusterGR_df$SOM %in% frac1_class),]
+
+#filter out non promoter cc and arrange by cluster and IWQ
+G0_up_t_IQW = G0_up_t %>% filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+G0_down_t_IQW = G0_down_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+S_t_IQW = S_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+G2_t_IQW = G2_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+flat_t_IQW = flat_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+M_down_t_IQW = M_down_t %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+nucSup_IQW = nucSup %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+chrSdown_IQW = chrSdown %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+frac1_IQW = frac1 %>% dplyr::filter(annotation =="promoter") %>% arrange(SOM, desc(interquantile_width)) 
+
+# From df to GR needed for heatmap. I am replacing the object to not copypaste too much
+
+tmp_IQW_GR = GRanges(seqnames = frac1_IQW$seqnames,
+                      ranges = IRanges(start = frac1_IQW$dominant_ctss.pos,
+                                       end = frac1_IQW$dominant_ctss.pos),
+                      strand = frac1_IQW$strand,
+                      score = frac1_IQW$score,
+                      interquantile_width = frac1_IQW$interquantile_width,
+                      seqlengths = seqlengths(txdb),
+                      SOM = frac1_IQW$SOM)
+
+```
+
+## HEATMAP
+
+```{r}
+
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+
+#position of switching superclasses
+group_pos2 = which(!duplicated(rev(tmp_IQW_GR$SOM))) - 0.5 # this calculates the positions where a new group starts
+
+
+
+#prepare data
+coords=c(-500, 500)
+windows<-promoters(tmp_IQW_GR, -coords[1], coords[2])
+seq<-getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+pattern_list<-c("GC","CG","SS","YCY","AT","TA","TATA")
+pattern<-PatternHeatmap(seq, pattern_list[6], coords=coords)
+pattern_smoothed<-smoothHeatmap(pattern,
+                                sigma = c(0.5,0.01),
+                                output.size=c(500,1000),
+                                algorithm="kernel")
+plotHeatmapList(pattern_smoothed,color="Reds")
+
+dev.flush() # to ensure that all plotting commands are executed before and after adding the lines
+
+for (pos in group_pos2) {
+  abline(h = pos, col = "black", lwd = 0.5)
+} # Add horizontal lines to the heatmap plot
+
+dev.flush()
+
+
+
+```
+
+## IQW plot
+
+```{r}
+barplot(rev(tmp_IQW_GR$interquantile_width), width=1,
+        , space= NULL, horiz = T, xlim = c(1,250))
+axis(1, at = seq(0, 600, by = 100))
+
+```
+
+## Metaplot
+
+```{r}
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+library(dplyr)
+library(heatmaps)
+txdb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# Filter out non promoter consensus clusters TOTAL RNA
+consclust_total_SOM_prom = totalSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_total_SOM_prom[which(consclust_total_SOM_prom$SOM == 25),]
+# Filter out non promoter consensus clusters NUCLEAR RNA
+consclust_nuclear_SOM_prom = nuclearSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_nuclear_SOM_prom[which(consclust_nuclear_SOM_prom$SOM == 25),]
+# Filter out non promoter consensus clusters FRACTIONATION RNA
+consclust_fract_SOM_prom = fractionSOM_consclusterGR_df %>% filter(annotation =="promoter")
+dftogr = consclust_fract_SOM_prom[which(consclust_fract_SOM_prom$SOM == 1),]
+dftogr=neighbor_background %>%
+  mutate(coordinate_start = ifelse(strand == "+", start, end),
+         coordinate_end = ifelse(strand == "+", end, start))
+dftogr=tM_intronSignal_good_unique %>%
+  mutate(coordinate_start = ifelse(strand == "+", start_intron, end_intron),
+         coordinate_end = ifelse(strand == "+", end_intron, start_intron))
+
+GR_metaplot = GRanges(seqnames = dftogr$seqnames,
+                      ranges = IRanges(start = dftogr$coordinate_end,
+                                       end = dftogr$coordinate_end),
+                      strand = dftogr$strand,
+                      score = dftogr$score,
+                      seqlengths = seqlengths(txdb))
+
+
+consClustGR_tmp = GR_metaplot
+Slidingwindow<-10 # you can define different size of window but it has to be dividible by 2 (next step)
+coords <-c(-50 - Slidingwindow/2, 50 + Slidingwindow/2) # you always have to divide the slidingwindow/2
+windows<-promoters(consClustGR_tmp, -coords[1], coords[2])
+seq <- getSeq(BSgenome.Hsapiens.UCSC.hg38, windows)
+sample_number<-length(seq)
+pattern_list<-c("GC","CG","TA","AT", "AG", "AGG", "YTNAY")
+motif_par<-pattern_list[1]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+X<-colSums(pattern@image)
+motif_par<-pattern_list[2]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Y<-colSums(pattern@image)
+motif_par<-pattern_list[3]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Z<-colSums(pattern@image)
+motif_par<-pattern_list[4]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+N<-colSums(pattern@image)
+motif_par<-pattern_list[5]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+O<-colSums(pattern@image)
+motif_par<-pattern_list[6]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+P<-colSums(pattern@image)
+motif_par<-pattern_list[7]
+pattern<-PatternHeatmap(seq, motif_par, coords=coords)
+Q<-colSums(pattern@image)
+X_sum<-data.frame(position=c(coords[1]:-1,1:coords[2]),
+                  "GC"=X,
+                  "CG"=Y, #SP
+                  "TA"=Z, # SP
+                  "AT"=N,
+                  "AG"=O,
+                  "AGG"=P,
+                  "YTNAY"=Q)
+X_sum
+slided_hits<-data.frame(position=c((coords[1]+Slidingwindow/2):-1,1:(coords[2]-Slidingwindow/2)),
+                        "GC"=NA,"CG"=NA,"TA"=NA,"AT"=NA, "AG"=NA, "AGG"=NA, "YTNAY"=NA)
+slide_tmp<-matrix(NA, nrow = (coords[2]*2-Slidingwindow),ncol=Slidingwindow+1)
+for (l in pattern_list) {
+  motif<-l
+  for (i in 1:(Slidingwindow+1)) {
+    range<-c(i:(nrow(X_sum)-Slidingwindow+i-1))
+    slide_tmp[,i]<-X_sum[range,motif]
+  }
+  slided_hits[,motif]<-rowSums(slide_tmp)/(Slidingwindow+1)
+}
+library(reshape)
+library(reshape2)
+slided_hits<-melt(slided_hits,id.vars = "position")
+slided_hits$type<-slided_hits$variable
+slided_hits$value<-slided_hits$value/nrow(as.data.frame(consClustGR_tmp)) #divided by nrow to normalise??
+
+metaplot_temp = ggplot(slided_hits
+,aes(x=position,
+     y=value,
+     color=variable))+
+  labs(title=paste0("Relative frequency of motif | Start of introns without signal |
+                    "," | N=",sample_number))+
+  xlab("Relative position")+
+  ylab("Relative frequency")+
+  #facet_wrap(.~type)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_vline(xintercept=c(0),lty=2,col="black",lwd=1)+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme_classic(base_size = 16)+
+  scale_colour_manual(values = c("orange1","red1", "blue3","cyan3","black","green2","purple","yellow","grey","royalblue2")) +
+  geom_point(aes(x = position, y = value, colour = variable)) +
+  scale_y_continuous(limits = c(0, 0.20), breaks = seq(0, 0.200, by = 0.025)) +
+  #geom_smooth(stat="smooth")
+  geom_line(data = slided_hits, aes(x = position, y = value))
+
+ggsave(filename = paste0("~/Desktop/cellcycle/plots/ELENA_CAGE/mergedRep/metaplot/fraction/Frac1_dinuc_metaplot.png"),height = 8,width = 8)
+print(metaplot_temp)
+
+
+```
+
+## SOM annotation
+
+```{r}
+
+totalSOM_consclusterGR_df =  readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/totalSOM_consclusterGR_df.rds")
+nuclearSOM_consclusterGR_df =  readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/nuclearSOM_consclusterGR_df.rds")
+fractionSOM_consclusterGR_df = readRDS("/Users/egomezma/Desktop/cellcycle/R/splitted_scripts/2_promoters/fractionSOM_consclusterGR_df.rds")
+
+
+
+
+consclustGR_annot_tmp = nuclearSOM_consclusterGR_df
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Sample dataframe: consclust_total_SOM
+
+# Create a cleaned 'annotation_clean' column by extracting only relevant categories
+consclust_nuclear_SOM_annotclean <- consclustGR_annot_tmp %>%
+  mutate(annotation_clean = case_when(
+    grepl("^Exon", annotation) ~ "Exon",
+    grepl("^Intron", annotation) ~ "Intron",
+    grepl("^Promoter", annotation) ~ "Promoter",
+    grepl("^3' UTR", annotation) ~ "3' UTR",
+    grepl("^5' UTR", annotation) ~ "5' UTR",
+    grepl("^Distal Intergenic", annotation) ~ "Distal Intergenic",
+    TRUE ~ NA_character_
+  ))
+
+# Remove any rows with NA in the cleaned annotations (if any exist)
+consclust_nuclear_SOM_annotclean <- consclust_nuclear_SOM_annotclean %>%
+  filter(!is.na(annotation_clean))
+
+# Calculate the total number of rows for each SOM group
+som_nuclear <- consclustGR_annot_tmp %>%
+  group_by(SOM) %>%
+  summarise(total = n())
+
+# Summarize the data by SOM and annotation category
+summary_data <- consclust_nuclear_SOM_annotclean %>%
+  group_by(SOM, annotation_clean) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+# Merge the total counts back to the summary_data
+summary_data <- summary_data %>%
+  left_join(som_nuclear, by = "SOM") %>%
+  mutate(frequency = count / total)  # Calculate the frequency for each category
+
+# Plot the normalized barplot
+ggplot(summary_data, aes(x = factor(SOM), y = count, fill = annotation_clean)) + # you can change count by frequency
+  geom_bar(stat = "identity", position = "stack") +  # Stack bars for proportions
+  labs(x = "SOM", y = "Frequency", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels if necessary
+  ggtitle("Annotation of SOM classes. Nuclear RNA")
+
+```
+
+## SOM tpm
+
+```{r}
+
+
+intronsignal_conscluster_SOM25
+# Filter out non promoter consensus clusters TOTAL RNA
+consclust_total_SOM_prom = totalSOM_consclusterGR_df %>% filter(annotation =="promoter")
+# Filter out non promoter consensus clusters NUCLEAR RNA
+consclust_nuclear_SOM_prom = nuclearSOM_consclusterGR_df %>% filter(annotation =="promoter")
+# Filter out non promoter consensus clusters FRACTIONATION RNA
+consclust_fract_SOM_prom = fractionSOM_consclusterGR_df %>% filter(annotation =="promoter")
+
+
+## VIOLIN PLOT
+
+# Violin plot with log10 scale and individual data points
+ggplot(consclust_nuclear_SOM_prom, aes(x = factor(SOM), y = score, fill = factor(SOM))) +
+  geom_violin(trim = FALSE, alpha = 0.7) +        # Semi-transparent violin plot
+  geom_jitter(width = 0.2, size = 0.1, alpha = 0.2) + # Jitter for individual points
+  labs(x = "SOM", y = "Log10(TPM)", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rotate x-axis labels if needed
+  ggtitle("TPM Distribution of SOM Classes. S phase RNA fractionation") +
+  scale_y_log10() # Set log10 scale
+
+
+
+
+#### BATPLOT
+# Summarize the data by SOM and annotation category
+summary_data <- consclust_total_SOM_prom %>%
+  group_by(SOM) %>%
+  summarise(median_tpm = mean(score, na.rm = T)) %>%
+  ungroup()
+
+
+# Plot the normalized barplot
+ggplot(summary_data, aes(x = factor(SOM), y = median_tpm, fill = factor(SOM))) +
+  geom_bar(stat = "identity", position = "stack") +  # Stack bars for proportions
+  labs(x = "SOM", y = "Frequency", fill = "Annotation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels if necessary
+  ggtitle("Mean TPM distribution of SOM classes. Total RNA") +
+  scale_y_continuous(limits = c(0, 3600), breaks = seq(0, 3500, by = 500))
+
+
+
+```
+
+## GO enrichment
+
+```{r}
+library(clusterProfiler)
+library("org.Hs.eg.db")
+library(ggplot2)
+library(stringr)
+odb<-org.Hs.eg.db
+
+class25 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 25),]
+class24 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 24),]
+class12 = totalSOM_consclusterGR_df[which(totalSOM_consclusterGR_df$SOM == 12),]
+intronsignal_conscluster_SOM5
+nMexpressed_noIntronS_GR_tpm
+tM_intronSignal_good_Iwidth
+nM_intronSignal_1GO
+nM_intronSignal_lowProm2
+common_streme3_fimo1 = as.data.frame(common_streme3_fimo1)
+consclust_fract_SOM_prom_for_GO <- consclust_fract_SOM_prom %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+frac1 = c(1,2,6,7,11,12)
+frac2 = c(4,5,9,10,14,20)
+nuc_high = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM %in% frac1),]
+nuc_low = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM %in% frac2),]
+frac1 = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM == 1),]
+fracn = consclust_fract_SOM_prom_for_GO[which(consclust_fract_SOM_prom_for_GO$SOM == 25),]
+GO_lowexpressed_intronS = nM_intronSignal_lowProm_ensembl %>% distinct(nM_intronSignal_lowProm_ensembl$ensembl_gene_id)
+
+#clean gene name
+nMexpressed_noIntronS_for_GO <- nMexpressed_noIntronS_GR_tpm %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+nMexpressed_IntronS_for_GO <- tM_intronSignal_good_Iwidth %>%
+  mutate(genes = str_remove_all(genes, ";?ENSG[^;]*;?"))
+
+
+S.df<-bitr(unique(nM_intronSignal_lowProm2$genes),
+  fromType = as.character("SYMBOL"),
+  toType = "ENTREZID",
+  OrgDb = odb)
+
+S.df<-bitr(unique(nM_intronSignal_lowProm_ensembl$ensembl_gene_id),
+  fromType = as.character("ENSEMBL"),
+  toType = "ENTREZID",
+  OrgDb = odb)
+
+S5.ego<-enrichGO(gene = S.df$ENTREZID,
+                 OrgDb = odb,
+                 ont="BP",
+                 pvalueCutoff=0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff =0.1)
+                 
+#dotplot(S25.ego, showCategory=15, title =paste0("GO enrichment"), x="p.adjust", orderBy=log2("GeneRatio"))
+
+
+S5.ego.plot = S5.ego@result %>%
+  arrange(p.adjust) %>% 
+  head(10) %>%
+  mutate(Description = factor(Description, levels = rev(Description))) %>%
+  ggplot(aes(x=-log10(p.adjust), 
+             y= Description,
+             size=Count,
+             colour=-log10(p.adjust))) +
+    geom_point() +
+    ggtitle("Not expressed genes with intron signal (121 genes)") +
+    theme_classic() +
+    theme(axis.text.y = element_text(size=11))
+
+
+
+# Select the top 20 enriched GO terms
+top_n_GO <- S5.ego@result[1:20, c("ID", "Description", "geneID")]
+
+# FUNCTION: Convert genes
+convert_genes <- function(gene_ids, from_type, to_type, orgdb) {
+  bitr(gene_ids, fromType = from_type, toType = as.character(to_type), OrgDb = orgdb)
+}
+
+# Split geneIDs and convert to gene SYMBOLS
+GO_list <- lapply(top_n_GO$geneID, function(genes) {
+  gene_vec <- unlist(strsplit(genes, "/"))  # Split by "/"
+  converted <- convert_genes(gene_vec, "ENTREZID", "SYMBOL", odb)
+  return(converted$SYMBOL)
+})
+
+# Find max number of genes in any category
+max_length <- max(sapply(GO_list, length))
+
+# Create a data frame with correct column names
+GO_df <- as.data.frame(do.call(cbind, lapply(GO_list, function(genes) c(genes, rep(NA, max_length - length(genes))))))
+colnames(GO_df) <- top_n_GO$Description  # Set correct column names
+
+# Save table in csv
+write.table(GO_df, 
+            file = "~/Desktop/cellcycle/plots/ELENA_CAGE_mergedRep/GO/class25.csv", quote = F, 
+            col.names = T, row.names = F, sep = "\t")
+
+```

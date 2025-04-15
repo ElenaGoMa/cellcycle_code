@@ -1,0 +1,30 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2761
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww20520\viewh7340\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs34 \cf0 NOTES OF ENHANCER ANALYSIS\
+\
+1. Quick enhancer\
+\
+assays(enh)$enhancers # retrieves rawcounts per sample mapping at each enhancer. USEFUL!\
+rowRanges(assays(enh)$enhancers) # retrieves two columns and no idea what it is\
+rownames(assays(enh)$enhancers) # retrieves rownames that assay that are enhancers coordinates. From here I got the GRranges\
+\
+\
+It gives Granges and their raw counts (34,117 enhancers)\
+This does not work as clusters and consensus clusters in cager. It defined a enhancer region, but you don\'92t know from which sample it comes or if the coordinates for that enhancer should be the same in all the samples.\
+I subtracted and summed the normalised CTSS signal overlapping enhancer regions.\
+This is subtracting all signal overlapping enhancers regions, regardless bidirectional transcription or replicate reproducibility.\
+\
+I then applied the following filter: I would consider signal in an enhancer for each sample if there is bidirectional transcription in each replicate, so only if there is signal in both strands in both replicates I will count signal for that particular sample in each enhancer.\
+\
+This reduced the number of enhancers to 5721 enhancers.\
+Then I removed those enhancers overlapping encode promoters and I got 3667 enhancers left\
+Then I removed those enhancers with tpm < 0.01 in at least one sample and I got 3366 enhancers left.\
+I used annotatePeak function from ChIPseeker and removed those enhancers overlapping TSS (2,746 enhancers left)\
+\
+\
+}
